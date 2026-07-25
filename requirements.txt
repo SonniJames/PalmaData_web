@@ -1,0 +1,12 @@
+# PalmaData · Sistema web
+# Versiones alineadas con palmadata_server (ya probadas en Python 3.14)
+fastapi==0.138.0
+uvicorn==0.49.0
+psycopg2-binary==2.9.12
+
+# Autenticación y sesiones
+itsdangerous==2.2.0        # firma de cookies de sesión
+python-multipart==0.0.20   # recibir formularios (login) y archivos
+
+# Utilidades
+python-dotenv==1.0.1       # leer el archivo .env

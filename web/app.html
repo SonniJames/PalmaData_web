@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PalmaData</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/core/tokens.css">
+<link rel="stylesheet" href="/core/shell.css">
+</head>
+<body>
+<div class="shell" id="shell">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="side-brand">
+      <div class="mark"><img src="/assets/logo.jpeg" alt=""></div>
+      <div class="txt">Palma<span>Data</span></div>
+    </div>
+    <nav class="nav" id="nav"></nav>
+    <div class="side-foot">Palmeras de Yarima · v1.0</div>
+  </aside>
+
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <button class="burger" id="burger" aria-label="Menú">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <span class="page-title" id="pageTitle">Inicio</span>
+    </div>
+    <div class="header-right">
+      <div class="user-chip">
+        <span class="avatar" id="avatar">?</span>
+        <span class="uname" id="uname">…</span>
+      </div>
+      <button class="btn-logout" id="btnLogout">Salir</button>
+    </div>
+  </header>
+
+  <!-- Contenido -->
+  <main class="main" id="main"></main>
+
+</div>
+
+<script type="module" src="/core/shell.js"></script>
+</body>
+</html>

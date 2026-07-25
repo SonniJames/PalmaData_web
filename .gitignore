@@ -1,0 +1,15 @@
+# Credenciales
+.env
+
+# Entorno virtual
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Sistema
+.DS_Store
+*.log

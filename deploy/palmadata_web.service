@@ -1,0 +1,21 @@
+# PalmaData Web · servicio systemd
+# Copiar a: /etc/systemd/system/palmadata_web.service
+# Luego:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now palmadata_web
+#   sudo systemctl status palmadata_web
+
+[Unit]
+Description=PalmaData Web (FastAPI + Uvicorn)
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=datacenter
+WorkingDirectory=/home/datacenter/palmadata_web
+ExecStart=/home/datacenter/palmadata_web/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
