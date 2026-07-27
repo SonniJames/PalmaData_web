@@ -1,17 +1,19 @@
 """
 PalmaData · Registro de módulos
 ================================
-ESTE ES EL ÚNICO ARCHIVO QUE TOCAS PARA AÑADIR UN MÓDULO NUEVO.
+ESTE ES EL ÚNICO ARCHIVO QUE TOCAS PARA AÑADIR UN MÓDULO AL MENÚ.
 
-Cada módulo es un diccionario con:
-  id        -> identificador único (sin espacios), usado en la URL
-  nombre    -> texto que se ve en el menú lateral
-  icono     -> nombre de icono (usamos SVG inline por nombre; ver web/core/icons.js)
-  activo    -> True para mostrarlo, False para ocultarlo sin borrarlo
-  submodulos-> lista opcional de sub-items [{id, nombre}]
+Cada módulo:
+  id         -> identificador único, se usa en la URL y para cargar su JS
+  nombre     -> texto del menú lateral
+  icono      -> nombre de icono (ver web/core/icons.js)
+  activo     -> True para mostrarlo; False lo oculta sin borrarlo
+  submodulos -> lista opcional [{id, nombre}]
 
-El frontend consume esta lista desde /api/modulos y construye el menú solo.
-Cuando montemos ANALFOLI, solo cambiaremos activo=True (o añadiremos su entrada).
+El frontend lee /api/modulos y construye el menú solo.
+Para que un módulo tenga pantalla propia, además de registrarlo aquí:
+  1. crea  app/modules/<id>/router.py  y móntalo en app/main.py
+  2. crea  web/modules/<id>/<id>.js  con una función montar(contenedor, sub)
 """
 
 MODULOS = [
@@ -23,18 +25,19 @@ MODULOS = [
         "submodulos": [],
     },
     {
-        "id": "analfoli",
-        "nombre": "Análisis Foliar",
+        "id": "fertilizacion",
+        "nombre": "Fertilización",
         "icono": "leaf",
-        "activo": False,   # se activará cuando montemos el módulo
+        "activo": True,
         "submodulos": [
-            {"id": "lotes", "nombre": "Lotes y resultados"},
+            {"id": "resumen",    "nombre": "Resumen"},
+            {"id": "lotes",      "nombre": "Lotes"},
+            {"id": "plan",       "nombre": "Plan y costos"},
             {"id": "parametros", "nombre": "Parámetros"},
-            {"id": "plan", "nombre": "Plan de fertilización"},
-            {"id": "avance", "nombre": "Avance de aplicación"},
+            {"id": "datos",      "nombre": "Cargar datos"},
         ],
     },
-    # --- Ejemplos de futuros módulos (desactivados) ---
+    # --- Futuros módulos (desactivados hasta que se construyan) ---
     {
         "id": "produccion",
         "nombre": "Producción",

@@ -10,3 +10,6 @@ python-multipart==0.0.20   # recibir formularios (login) y archivos
 
 # Utilidades
 python-dotenv==1.0.1       # leer el archivo .env
+
+
+openpyxl==3.1.5            # leer y generar Excel
