@@ -3,27 +3,18 @@ PalmaData · Fertilización · Repositorio
 =======================================
 Todo el SQL del módulo. El router no escribe consultas.
 
-Los INSERT se construyen a partir del mapa de columnas.py, así que
-si el formato del Excel cambia, no hay que tocar SQL a mano.
+Seis tablas:
+  fert_campana · fert_lote · fert_foliar · fert_balance
+  fert_requerimiento · fert_parametros
 """
 import json
 
 from ...core import db
-from . import columnas as COL
+from . import formato as F
 from .params import get_default_params, merge_params
 
-# Alias de bloque -> nombre corto que usa el frontend
-ALIAS = {
-    "fert_foliar":        "foliar",
-    "fert_secundarios":   "secundarios",
-    "fert_indice":        "indice",
-    "fert_diferencia":    "diferencia",
-    "fert_requerimiento": "requerimiento",
-    "fert_oxido":         "oxido",
-    "fert_simples":       "simples",
-    "fert_grado":         "grado",
-    "fert_toneladas":     "toneladas",
-}
+# clave interna -> tabla destino de los bloques JSONB
+TABLAS_BLOQUE = {clave: tabla for clave, (_h, tabla, _e) in F.HOJAS_DATOS.items()}
 
 
 # ============================================================
@@ -66,12 +57,10 @@ def crear_campana(cur, anio: int, nombre=None, archivo=None,
         fila = cur.fetchone()
         if fila:
             params = fila["params"]
-    if params is None:
-        params = get_default_params()
 
     cur.execute(
         "INSERT INTO plantacion.fert_parametros (campana_id, params) VALUES (%s,%s)",
-        (campana_id, json.dumps(params)))
+        (campana_id, json.dumps(params or get_default_params())))
     return campana_id
 
 
@@ -84,7 +73,11 @@ def obtener_o_crear_campana(cur, anio: int, archivo=None, usuario=None) -> int:
                            SET archivo=%s, cargado_por=%s WHERE id=%s""",
                         (archivo, usuario, fila["id"]))
         return fila["id"]
-    return crear_campana(cur, anio, archivo=archivo, usuario=usuario)
+    # Al crear un año nuevo, hereda los parámetros del más reciente
+    cur.execute("SELECT MAX(anio) AS ultimo FROM plantacion.fert_campana")
+    ultimo = (cur.fetchone() or {}).get("ultimo")
+    return crear_campana(cur, anio, archivo=archivo, usuario=usuario,
+                         copiar_de=ultimo)
 
 
 def eliminar_campana(anio: int) -> bool:
@@ -132,62 +125,55 @@ def guardar_parametros(anio: int, params: dict) -> bool:
     return True
 
 
+def guardar_parametros_cur(cur, campana_id: int, params: dict):
+    cur.execute("""
+        INSERT INTO plantacion.fert_parametros (campana_id, params)
+        VALUES (%s,%s)
+        ON CONFLICT (campana_id) DO UPDATE SET params = EXCLUDED.params
+    """, (campana_id, json.dumps(params)))
+
+
 # ============================================================
-#  CARGA DE LOTES
+#  CARGA
 # ============================================================
-
-def _sql_upsert_bloque(tabla: str) -> str:
-    campos = [c for _, c in COL.BLOQUES[tabla]]
-    cols = ", ".join(campos)
-    marcas = ", ".join(["%s"] * len(campos))
-    updates = ", ".join(f"{c}=EXCLUDED.{c}" for c in campos)
-    return f"""
-        INSERT INTO plantacion.{tabla} (lote_id, {cols})
-        VALUES (%s, {marcas})
-        ON CONFLICT (lote_id) DO UPDATE SET {updates}
-    """
-
-
-_SQL_BLOQUES = {t: _sql_upsert_bloque(t) for t in COL.BLOQUES if t != "fert_lote"}
 
 _SQL_LOTE = """
     INSERT INTO plantacion.fert_lote
-        (campana_id, fila_excel, codigo, zona, rango_edad, identificacion,
-         uma, material, siembra, palmas, hoja, mst, tons)
-    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        (campana_id, identificacion, uma, sector, zona, rango_edad, palmas,
+         hectareas, material, siembra, codigo, hoja, mst, tons, extra, fila_excel)
+    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
     ON CONFLICT (campana_id, identificacion) DO UPDATE SET
-        fila_excel = EXCLUDED.fila_excel,
-        codigo     = EXCLUDED.codigo,
-        zona       = EXCLUDED.zona,
-        rango_edad = EXCLUDED.rango_edad,
-        uma        = EXCLUDED.uma,
-        material   = EXCLUDED.material,
-        siembra    = EXCLUDED.siembra,
-        palmas     = EXCLUDED.palmas,
-        hoja       = EXCLUDED.hoja,
-        mst        = EXCLUDED.mst,
-        tons       = EXCLUDED.tons
+        uma=EXCLUDED.uma, sector=EXCLUDED.sector, zona=EXCLUDED.zona,
+        rango_edad=EXCLUDED.rango_edad, palmas=EXCLUDED.palmas,
+        hectareas=EXCLUDED.hectareas, material=EXCLUDED.material,
+        siembra=EXCLUDED.siembra, codigo=EXCLUDED.codigo, hoja=EXCLUDED.hoja,
+        mst=EXCLUDED.mst, tons=EXCLUDED.tons, extra=EXCLUDED.extra,
+        fila_excel=EXCLUDED.fila_excel
     RETURNING id, (xmax = 0) AS es_nuevo
 """
 
 
-def guardar_lote(cur, campana_id: int, registro: dict) -> bool:
-    """Inserta o actualiza un lote y todos sus bloques. True si es nuevo."""
-    base = registro["fert_lote"]
+def guardar_lote(cur, campana_id: int, reg: dict) -> bool:
+    """Guarda el lote y sus bloques. Devuelve True si es nuevo."""
     cur.execute(_SQL_LOTE, (
-        campana_id, registro.get("fila_excel"),
-        base.get("codigo"), base.get("zona"), base.get("rango_edad"),
-        base.get("identificacion"), base.get("uma"), base.get("material"),
-        base.get("siembra"), base.get("palmas"), base.get("hoja"),
-        base.get("mst"), base.get("tons"),
+        campana_id, reg["identificacion"], reg.get("uma"), reg.get("sector"),
+        reg.get("zona"), reg.get("rango_edad"), reg.get("palmas"),
+        reg.get("hectareas"), reg.get("material"), reg.get("siembra"),
+        reg.get("codigo"), reg.get("hoja"), reg.get("mst"), reg.get("tons"),
+        json.dumps(reg.get("extra") or {}), reg.get("fila_excel"),
     ))
     fila = cur.fetchone()
     lote_id, es_nuevo = fila["id"], fila["es_nuevo"]
 
-    for tabla, sql in _SQL_BLOQUES.items():
-        datos = registro.get(tabla, {})
-        valores = [lote_id] + [datos.get(c) for _, c in COL.BLOQUES[tabla]]
-        cur.execute(sql, valores)
+    for clave, tabla in TABLAS_BLOQUE.items():
+        datos = (reg.get("bloques") or {}).get(clave)
+        if datos is None:
+            continue
+        cur.execute(f"""
+            INSERT INTO plantacion.{tabla} (lote_id, datos)
+            VALUES (%s,%s)
+            ON CONFLICT (lote_id) DO UPDATE SET datos = EXCLUDED.datos
+        """, (lote_id, json.dumps(datos)))
 
     return bool(es_nuevo)
 
@@ -201,36 +187,30 @@ def borrar_lotes_de_campana(cur, campana_id: int) -> int:
 #  CONSULTA
 # ============================================================
 
-def _select_completo() -> str:
-    """Arma el SELECT con todos los bloques, cada uno como JSON anidado."""
-    joins, campos = [], []
-    for tabla, alias in ALIAS.items():
-        letra = alias[:2] + str(len(joins))
-        joins.append(f"LEFT JOIN plantacion.{tabla} {letra} ON {letra}.lote_id = l.id")
-        pares = ", ".join(f"'{c}', {letra}.{c}" for _, c in COL.BLOQUES[tabla])
-        campos.append(f"json_build_object({pares}) AS {alias}")
-
-    return f"""
-        SELECT l.id, l.fila_excel, l.codigo, l.zona, l.rango_edad,
-               l.identificacion, l.uma, l.material, l.siembra,
-               l.palmas, l.hoja, l.mst, l.tons,
-               {", ".join(campos)}
-        FROM plantacion.fert_lote l
-        JOIN plantacion.fert_campana c ON c.id = l.campana_id
-        {" ".join(joins)}
-    """
+_SELECT = """
+    SELECT l.id, l.identificacion, l.uma, l.sector, l.zona, l.rango_edad,
+           l.palmas, l.hectareas, l.material, l.siembra, l.codigo, l.hoja,
+           l.mst, l.tons, l.extra, l.fila_excel,
+           COALESCE(f.datos, '{}'::jsonb) AS foliar,
+           COALESCE(b.datos, '{}'::jsonb) AS balance,
+           COALESCE(r.datos, '{}'::jsonb) AS requerimiento
+    FROM plantacion.fert_lote l
+    JOIN plantacion.fert_campana c ON c.id = l.campana_id
+    LEFT JOIN plantacion.fert_foliar f        ON f.lote_id = l.id
+    LEFT JOIN plantacion.fert_balance b       ON b.lote_id = l.id
+    LEFT JOIN plantacion.fert_requerimiento r ON r.lote_id = l.id
+"""
 
 
-_SELECT = _select_completo()
-
-
-def listar_lotes(anio: int, zona: str | None = None,
-                 rango_edad: str | None = None) -> list[dict]:
+def listar_lotes(anio: int, zona=None, sector=None, rango_edad=None) -> list[dict]:
     sql = _SELECT + " WHERE c.anio = %s"
     params: list = [anio]
     if zona and zona.lower() != "todas":
         sql += " AND l.zona = %s"
         params.append(zona)
+    if sector and sector.lower() != "todos":
+        sql += " AND l.sector = %s"
+        params.append(sector)
     if rango_edad and rango_edad.lower() != "todas":
         sql += " AND l.rango_edad = %s"
         params.append(rango_edad)
@@ -243,24 +223,52 @@ def obtener_lote(lote_id: int) -> dict | None:
 
 
 def filtros_de_campana(anio: int) -> dict:
-    zonas = db.fetch_all("""
-        SELECT DISTINCT l.zona FROM plantacion.fert_lote l
+    base = """
+        FROM plantacion.fert_lote l
         JOIN plantacion.fert_campana c ON c.id = l.campana_id
-        WHERE c.anio=%s AND l.zona IS NOT NULL ORDER BY l.zona
-    """, (anio,))
-    edades = db.fetch_all("""
-        SELECT DISTINCT l.rango_edad FROM plantacion.fert_lote l
-        JOIN plantacion.fert_campana c ON c.id = l.campana_id
-        WHERE c.anio=%s AND l.rango_edad IS NOT NULL ORDER BY l.rango_edad
-    """, (anio,))
-    return {"zonas": [z["zona"] for z in zonas],
-            "rangos_edad": [e["rango_edad"] for e in edades]}
+        WHERE c.anio = %s
+    """
+    def distintos(columna):
+        filas = db.fetch_all(
+            f"SELECT DISTINCT l.{columna} AS v {base} AND l.{columna} IS NOT NULL "
+            f"ORDER BY v", (anio,))
+        return [f["v"] for f in filas]
+
+    return {"zonas": distintos("zona"),
+            "sectores": distintos("sector"),
+            "rangos_edad": distintos("rango_edad")}
 
 
-def actualizar_base(lote_id: int, datos: dict) -> bool:
-    """Edición manual de los datos base de un lote."""
-    permitidos = ["codigo", "zona", "rango_edad", "identificacion", "uma",
-                  "material", "siembra", "palmas", "hoja", "mst", "tons"]
+def fertilizantes_de_campana(anio: int) -> list[str]:
+    """Nombres de los fertilizantes que trajo el Excel de esa campaña."""
+    filas = db.fetch_all("""
+        SELECT DISTINCT kv.key AS producto
+        FROM plantacion.fert_requerimiento r
+        JOIN plantacion.fert_lote l    ON l.id = r.lote_id
+        JOIN plantacion.fert_campana c ON c.id = l.campana_id,
+             LATERAL jsonb_each(r.datos) kv
+        WHERE c.anio = %s
+        ORDER BY producto
+    """, (anio,))
+    return [f["producto"] for f in filas]
+
+
+def nutrientes_de_campana(anio: int, tabla: str = "fert_foliar") -> list[str]:
+    filas = db.fetch_all(f"""
+        SELECT DISTINCT kv.key AS nutriente
+        FROM plantacion.{tabla} t
+        JOIN plantacion.fert_lote l    ON l.id = t.lote_id
+        JOIN plantacion.fert_campana c ON c.id = l.campana_id,
+             LATERAL jsonb_each(t.datos) kv
+        WHERE c.anio = %s
+    """, (anio,))
+    return [f["nutriente"] for f in filas]
+
+
+def actualizar_lote(lote_id: int, datos: dict) -> bool:
+    permitidos = ["identificacion", "uma", "sector", "zona", "rango_edad",
+                  "palmas", "hectareas", "material", "siembra", "codigo",
+                  "hoja", "mst", "tons"]
     sets = [f"{c}=%s" for c in permitidos if c in datos]
     if not sets:
         return False
@@ -275,3 +283,13 @@ def eliminar_lote(lote_id: int) -> bool:
     with db.get_cursor() as cur:
         cur.execute("DELETE FROM plantacion.fert_lote WHERE id=%s", (lote_id,))
         return cur.rowcount > 0
+
+
+def identificaciones_de_campana(anio: int) -> list[str]:
+    """Para precargar el formato de descarga con los lotes del año anterior."""
+    filas = db.fetch_all("""
+        SELECT l.identificacion FROM plantacion.fert_lote l
+        JOIN plantacion.fert_campana c ON c.id = l.campana_id
+        WHERE c.anio = %s ORDER BY l.uma NULLS LAST, l.identificacion
+    """, (anio,))
+    return [f["identificacion"] for f in filas]

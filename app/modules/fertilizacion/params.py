@@ -1,74 +1,50 @@
 """
-PalmaData · Fertilización · Parámetros ingresables
-==================================================
-En este enfoque el sistema NO recalcula la agronomía: eso viene resuelto
-en el Excel del ingeniero. Lo único que se ingresa desde la web es lo
-que el Excel no trae y sí depende de la gestión: precios, umbrales de
-semáforo para las gráficas, y metas.
+PalmaData · Fertilización · Parámetros
+======================================
+El sistema no recalcula la agronomía: eso viene resuelto del Excel.
+Aquí solo vive lo que el archivo no trae y sí depende de la gestión.
 
-Se guardan por campaña en plantacion.fert_parametros.
+Se guardan por campaña en plantacion.fert_parametros (JSONB).
+
+Los PRECIOS son dinámicos: sus claves son los nombres de los
+fertilizantes que trajo el Excel de esa campaña. Si el año que viene
+se usan otros, aparecen solos en el formulario.
 """
 import copy
 
 DEF_PARAMS: dict = {
 
-    # Precios de fertilizantes · COP por TONELADA
-    # Multiplican las toneladas del bloque final del Excel (DX-ED).
-    "precios": {
-        "grado":     3500000,   # Grado 13-5-27-5(Mg)
-        "nca":       2900000,   # Nitrato de calcio
-        "rafos":     1700000,   # Rafos 12-24-12
-        "ksomgo":    3100000,   # PatentKali / Sulfato doble K-Mg
-        "kieserita": 2300000,
-        "borax":     8500000,   # Bórax 48%
-        "znso4":     4200000,   # Sulfato de zinc
-    },
+    # Precios por fertilizante · COP por unidad del Excel (normalmente tonelada).
+    # Las claves se crean solas al cargar el archivo.
+    #   {"Grado 13-5-27-5(Mg)": 3500000, "NCa": 2900000, ...}
+    "precios": {},
 
     # Umbrales del semáforo del índice de balance (% sobre el óptimo).
-    # Solo afectan los COLORES de las tablas y gráficas, no los números.
+    # Solo afectan los COLORES; los números no cambian.
     "bands": {
         "deficiente": 70,
-        "bajo":       90,
-        "optimo":     120,
+        "bajo": 90,
+        "optimo": 120,
     },
 
-    # Costos indirectos de la campaña, para el costo total real
-    "costos": {
-        "flete_por_ton":       0,    # COP por tonelada transportada
-        "aplicacion_por_ton":  0,    # COP por tonelada aplicada (mano de obra)
-        "otros":               0,    # COP fijos de la campaña
-    },
-
-    # Metas de la campaña, para comparar contra lo planeado
-    "metas": {
-        "presupuesto":    0,    # COP disponibles
-        "tons_fruto":     0,    # producción esperada de la plantación
-    },
+    # Hectáreas de la plantación, para el costo por hectárea.
+    # Si la hoja identificacion trae la columna `hectareas`, se usa esa
+    # (permite costo por hectárea por zona y por sector). Este valor
+    # global es el respaldo cuando la columna no viene.
+    "hectareas": 0,
 }
 
 ETIQUETAS = {
-    "precios": "Precios de fertilizantes (COP por tonelada)",
-    "bands":   "Umbrales del semáforo (% sobre el óptimo)",
-    "costos":  "Costos indirectos",
-    "metas":   "Metas de la campaña",
+    "precios":   "Precios de fertilizantes (COP)",
+    "bands":     "Umbrales del semáforo (% sobre el óptimo)",
+    "generales": "Datos de la plantación",
 }
 
 CAMPOS = {
-    "grado": "Grado 13-5-27-5(Mg)",
-    "nca": "Nitrato de calcio",
-    "rafos": "Rafos 12-24-12",
-    "ksomgo": "PatentKali (K-Mg)",
-    "kieserita": "Kieserita",
-    "borax": "Bórax 48%",
-    "znso4": "Sulfato de zinc",
     "deficiente": "Deficiente por debajo de",
-    "bajo": "Bajo por debajo de",
-    "optimo": "Óptimo hasta",
-    "flete_por_ton": "Flete por tonelada",
-    "aplicacion_por_ton": "Aplicación por tonelada",
-    "otros": "Otros costos fijos",
-    "presupuesto": "Presupuesto de la campaña",
-    "tons_fruto": "Producción esperada (ton fruto)",
+    "bajo":       "Bajo por debajo de",
+    "optimo":     "Óptimo hasta",
+    "hectareas":  "Hectáreas totales",
 }
 
 
@@ -85,3 +61,15 @@ def merge_params(base: dict, override: dict) -> dict:
         else:
             out[clave] = valor
     return out
+
+
+def asegurar_precios(params: dict, fertilizantes: list[str]) -> dict:
+    """
+    Garantiza que todos los fertilizantes de la campaña tengan una
+    entrada de precio (en 0 si es nueva), para que aparezcan en la web.
+    """
+    p = copy.deepcopy(params)
+    p.setdefault("precios", {})
+    for f in fertilizantes:
+        p["precios"].setdefault(f, 0)
+    return p

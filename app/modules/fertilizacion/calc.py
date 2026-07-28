@@ -5,19 +5,19 @@ Lo único que calcula el backend. NO toca la agronomía:
 los valores del Excel se usan tal como vienen.
 
 Aquí solo hay aritmética de gestión:
-  · totales de fertilizante por zona / edad / material
-  · costos (toneladas × precio) e indirectos
-  · nutriente por lote en toneladas (lo que el Excel tiene en Hoja1)
-  · semáforo del índice de balance para colorear
+  · costos = cantidad × precio
+  · costo por palma y por hectárea
+  · totales por zona, sector y rango de edad
+  · semáforo del índice de balance (solo el color)
   · indicadores para las gráficas
 """
-from .columnas import ETIQUETA_NUTRIENTE, NUTRIENTES, PRODUCTOS
+from .formato import ordenar_nutrientes
 
 
 def num(v) -> float:
     try:
         f = float(v)
-        return f if f == f else 0.0   # descarta NaN
+        return f if f == f else 0.0
     except (TypeError, ValueError):
         return 0.0
 
@@ -38,106 +38,98 @@ def semaforo(indice, bands: dict) -> str:
     return "excesivo"
 
 
-def costo_lote(toneladas: dict, params: dict) -> dict:
-    """Costo de un lote: cada producto por su precio + indirectos."""
-    precios = params.get("precios", {})
-    costos = params.get("costos", {})
-
-    detalle, total_ton, total_cop = {}, 0.0, 0.0
-    for campo, clave_precio, _ in PRODUCTOS:
-        t = num(toneladas.get(campo))
-        c = t * num(precios.get(clave_precio))
-        detalle[clave_precio] = {"toneladas": t, "costo": c}
-        total_ton += t
-        total_cop += c
-
-    flete = total_ton * num(costos.get("flete_por_ton"))
-    aplicacion = total_ton * num(costos.get("aplicacion_por_ton"))
-
-    return {
-        "detalle": detalle,
-        "toneladas": round(total_ton, 3),
-        "costo_fertilizante": total_cop,
-        "costo_flete": flete,
-        "costo_aplicacion": aplicacion,
-        "costo_total": total_cop + flete + aplicacion,
-    }
-
-
-def nutrientes_lote(oxido: dict, palmas) -> dict:
+def costo_lote(requerimiento: dict, precios: dict) -> dict:
     """
-    Equivalente a la Hoja1 del Excel: nutriente en toneladas por lote.
-      toneladas = kg/palma × palmas ÷ 1000
+    Costo de un lote. `requerimiento` es {fertilizante: cantidad}
+    y `precios` es {fertilizante: COP por unidad}.
+    Funciona con cualquier conjunto de fertilizantes.
     """
-    H = num(palmas)
-    return {campo.replace("ox_", "t_"): num(valor) * H / 1000
-            for campo, valor in (oxido or {}).items()}
+    detalle, total_cant, total_cop = {}, 0.0, 0.0
+    for producto, cantidad in (requerimiento or {}).items():
+        c = num(cantidad)
+        costo = c * num((precios or {}).get(producto))
+        detalle[producto] = {"cantidad": c, "costo": costo}
+        total_cant += c
+        total_cop += costo
+
+    return {"detalle": detalle,
+            "cantidad": round(total_cant, 3),
+            "costo_total": total_cop}
 
 
 def preparar_lote(fila: dict, params: dict) -> dict:
-    """
-    Arma el lote que consume el frontend: los datos tal cual vienen
-    del Excel, más el costo, el semáforo y el nutriente en toneladas.
-    """
+    """Añade al lote su semáforo y su costo."""
     lote = dict(fila)
     bands = params.get("bands", {})
+    precios = params.get("precios", {})
 
-    indice = lote.get("indice") or {}
-    lote["semaforo"] = {n: semaforo(indice.get(n), bands) for n in NUTRIENTES}
-    lote["costos"] = costo_lote(lote.get("toneladas") or {}, params)
-    lote["nutrientes_ton"] = nutrientes_lote(lote.get("oxido") or {},
-                                             lote.get("palmas"))
+    balance = lote.get("balance") or {}
+    lote["semaforo"] = {k: semaforo(v, bands) for k, v in balance.items()}
+    lote["costos"] = costo_lote(lote.get("requerimiento") or {}, precios)
+
+    ha = num(lote.get("hectareas"))
+    palmas = num(lote.get("palmas"))
+    if ha:
+        lote["costos"]["costo_por_hectarea"] = lote["costos"]["costo_total"] / ha
+    if palmas:
+        lote["costos"]["costo_por_palma"] = lote["costos"]["costo_total"] / palmas
+
     return lote
 
 
-def consolidar(lotes: list[dict], por: str, params: dict) -> dict:
-    """
-    Agrupa por zona, rango_edad o material.
-    Devuelve los grupos y el total general.
-    """
+def consolidar(lotes: list[dict], por: str, params: dict,
+               fertilizantes: list[str] | None = None) -> dict:
+    """Agrupa por zona, sector, rango_edad o material."""
+    if fertilizantes is None:
+        fertilizantes = sorted({f for l in lotes
+                                for f in (l.get("requerimiento") or {})})
+
     grupos: dict[str, dict] = {}
 
     for l in lotes:
         clave = l.get(por) or "Sin dato"
         g = grupos.setdefault(clave, {
-            "grupo": clave, "lotes": 0, "palmas": 0, "tons_fruto": 0.0,
-            "toneladas": 0.0, "costo_total": 0.0,
-            **{p[1]: 0.0 for p in PRODUCTOS},
+            "grupo": clave, "lotes": 0, "palmas": 0, "hectareas": 0.0,
+            "tons_fruto": 0.0, "cantidad": 0.0, "costo_total": 0.0,
+            **{f: 0.0 for f in fertilizantes},
         })
         g["lotes"] += 1
         g["palmas"] += int(num(l.get("palmas")))
+        g["hectareas"] += num(l.get("hectareas"))
         g["tons_fruto"] += num(l.get("tons"))
-        g["toneladas"] += l["costos"]["toneladas"]
+        g["cantidad"] += l["costos"]["cantidad"]
         g["costo_total"] += l["costos"]["costo_total"]
-        for campo, clave_precio, _ in PRODUCTOS:
-            g[clave_precio] += num((l.get("toneladas") or {}).get(campo))
+        for f in fertilizantes:
+            g[f] += num((l.get("requerimiento") or {}).get(f))
 
     lista = sorted(grupos.values(), key=lambda x: str(x["grupo"]))
     for g in lista:
-        for k in ("toneladas", "tons_fruto", *[p[1] for p in PRODUCTOS]):
+        for k in ("cantidad", "tons_fruto", "hectareas", *fertilizantes):
             g[k] = round(g[k], 2)
+        if g["palmas"]:
+            g["costo_por_palma"] = g["costo_total"] / g["palmas"]
+        if g["hectareas"]:
+            g["costo_por_hectarea"] = g["costo_total"] / g["hectareas"]
 
     total = {
         "lotes": sum(g["lotes"] for g in lista),
         "palmas": sum(g["palmas"] for g in lista),
+        "hectareas": round(sum(g["hectareas"] for g in lista), 2),
         "tons_fruto": round(sum(g["tons_fruto"] for g in lista), 2),
-        "toneladas": round(sum(g["toneladas"] for g in lista), 2),
+        "cantidad": round(sum(g["cantidad"] for g in lista), 2),
         "costo_total": sum(g["costo_total"] for g in lista),
     }
-    for _, clave, _ in PRODUCTOS:
-        total[clave] = round(sum(g[clave] for g in lista), 2)
-
-    otros = num(params.get("costos", {}).get("otros"))
-    total["otros_costos"] = otros
-    total["costo_total"] += otros
-
-    presupuesto = num(params.get("metas", {}).get("presupuesto"))
-    if presupuesto:
-        total["presupuesto"] = presupuesto
-        total["ejecucion_pct"] = round(total["costo_total"] / presupuesto * 100, 1)
+    for f in fertilizantes:
+        total[f] = round(sum(g[f] for g in lista), 2)
 
     if total["palmas"]:
         total["costo_por_palma"] = total["costo_total"] / total["palmas"]
+
+    # Hectáreas: las de los lotes; si no vienen, el valor global de parámetros
+    ha = total["hectareas"] or num(params.get("hectareas"))
+    if ha:
+        total["hectareas_usadas"] = ha
+        total["costo_por_hectarea"] = total["costo_total"] / ha
     if total["tons_fruto"]:
         total["costo_por_ton_fruto"] = total["costo_total"] / total["tons_fruto"]
 
@@ -147,42 +139,50 @@ def consolidar(lotes: list[dict], por: str, params: dict) -> dict:
 def resumen_nutricional(lotes: list[dict], params: dict) -> dict:
     """
     Para las gráficas: cuántos lotes hay en cada estado nutricional,
-    por nutriente. Alimenta el diagnóstico de la plantación.
+    por nutriente. Los nutrientes salen de los datos, no de una lista fija.
     """
     estados = ["deficiente", "bajo", "optimo", "excesivo", "sin-dato"]
+    claves = {k for l in lotes for k in (l.get("balance") or {})}
     salida = []
 
-    for n in NUTRIENTES:
+    for n in ordenar_nutrientes(claves):
         conteo = {e: 0 for e in estados}
-        suma = 0.0
-        con_dato = 0
+        suma, con_dato = 0.0, 0
         for l in lotes:
-            estado = l["semaforo"].get(n, "sin-dato")
+            estado = (l.get("semaforo") or {}).get(n, "sin-dato")
             conteo[estado] += 1
-            v = num((l.get("indice") or {}).get(n))
+            v = num((l.get("balance") or {}).get(n))
             if v > 0:
                 suma += v
                 con_dato += 1
-        salida.append({
-            "nutriente": ETIQUETA_NUTRIENTE[n],
-            "clave": n,
-            "promedio": round(suma / con_dato, 1) if con_dato else 0,
-            **conteo,
-        })
+        salida.append({"nutriente": n,
+                       "promedio": round(suma / con_dato, 1) if con_dato else 0,
+                       **conteo})
 
     return {"nutrientes": salida, "total_lotes": len(lotes)}
 
 
 def comparar_campanas(datos_por_anio: dict[int, dict]) -> list[dict]:
-    """Compara toneladas y costo entre campañas."""
+    """
+    Compara campañas. Soporta que cada año use fertilizantes distintos:
+    los que no existan en un año quedan en 0.
+    """
+    fijos = {"lotes", "palmas", "hectareas", "hectareas_usadas", "tons_fruto",
+             "cantidad", "costo_total", "costo_por_palma",
+             "costo_por_hectarea", "costo_por_ton_fruto"}
+    productos = sorted({k for d in datos_por_anio.values()
+                        for k in d["total"] if k not in fijos})
+
     salida = []
     for anio in sorted(datos_por_anio):
         t = datos_por_anio[anio]["total"]
         fila = {"anio": anio, "lotes": t["lotes"], "palmas": t["palmas"],
-                "toneladas": t["toneladas"], "costo_total": t["costo_total"]}
-        for _, clave, _ in PRODUCTOS:
-            fila[clave] = t.get(clave, 0)
-        if t["palmas"]:
-            fila["costo_por_palma"] = round(t["costo_total"] / t["palmas"], 2)
+                "hectareas": t.get("hectareas", 0),
+                "cantidad": t["cantidad"], "costo_total": t["costo_total"],
+                "costo_por_palma": t.get("costo_por_palma", 0),
+                "costo_por_hectarea": t.get("costo_por_hectarea", 0)}
+        for p in productos:
+            fila[p] = t.get(p, 0)
         salida.append(fila)
+
     return salida

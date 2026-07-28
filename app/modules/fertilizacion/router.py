@@ -10,11 +10,10 @@ from fastapi.responses import Response
 
 from ...core import db, security
 from . import repository as repo
-from .calc import (comparar_campanas, consolidar, preparar_lote,
-                   resumen_nutricional)
-from .columnas import ETIQUETA_NUTRIENTE, NUTRIENTES, PRODUCTOS
+from .calc import comparar_campanas, consolidar, preparar_lote, resumen_nutricional
 from .excel_loader import generar_formato, leer_excel
-from .params import CAMPOS, ETIQUETAS, get_default_params
+from .formato import HOJAS_DATOS, ordenar_nutrientes
+from .params import CAMPOS, ETIQUETAS, asegurar_precios, get_default_params
 
 router = APIRouter(prefix="/api/fertilizacion", tags=["fertilizacion"])
 
@@ -28,21 +27,23 @@ def sesion(request: Request) -> dict:
     return usuario
 
 
-def _limpiar(valor):
+def _limpiar(v):
     """Decimal de Postgres -> float, para JSON limpio."""
-    if hasattr(valor, "quantize"):
-        return float(valor)
-    if isinstance(valor, dict):
-        return {k: _limpiar(v) for k, v in valor.items()}
-    return valor
+    if hasattr(v, "quantize"):
+        return float(v)
+    if isinstance(v, dict):
+        return {k: _limpiar(x) for k, x in v.items()}
+    return v
 
 
-def _lotes_preparados(anio: int, zona=None, rango_edad=None):
-    filas = repo.listar_lotes(anio, zona, rango_edad)
+def _cargar(anio: int, zona=None, sector=None, rango_edad=None):
+    """Devuelve (lotes preparados, params, fertilizantes)."""
+    filas = repo.listar_lotes(anio, zona, sector, rango_edad)
     params = repo.parametros_o_default(anio)
     lotes = [preparar_lote({k: _limpiar(v) for k, v in f.items()}, params)
              for f in filas]
-    return lotes, params
+    ferts = repo.fertilizantes_de_campana(anio)
+    return lotes, params, ferts
 
 
 # ============================================================
@@ -86,18 +87,20 @@ def put_estado(anio: int, datos: dict = Body(...), _=Depends(sesion)):
 #  PARÁMETROS
 # ============================================================
 
-@router.get("/parametros/default")
-def get_default(_=Depends(sesion)):
-    return {"ok": True, "params": get_default_params(),
-            "etiquetas": ETIQUETAS, "campos": CAMPOS}
-
-
 @router.get("/parametros/{anio}")
 def get_parametros(anio: int, _=Depends(sesion)):
+    """
+    Parámetros de la campaña. Los precios se completan con los
+    fertilizantes que trajo el Excel de ESE año, así el formulario
+    cambia según la campaña seleccionada.
+    """
     p = repo.obtener_parametros(anio)
     if p is None:
         raise HTTPException(404, f"No hay parámetros para {anio}.")
-    return {"ok": True, "params": p, "etiquetas": ETIQUETAS, "campos": CAMPOS}
+    ferts = repo.fertilizantes_de_campana(anio)
+    p = asegurar_precios(p, ferts)
+    return {"ok": True, "params": p, "fertilizantes": ferts,
+            "etiquetas": ETIQUETAS, "campos": CAMPOS}
 
 
 @router.put("/parametros/{anio}")
@@ -107,15 +110,25 @@ def put_parametros(anio: int, params: dict = Body(...), _=Depends(sesion)):
     return {"ok": True, "anio": anio}
 
 
+@router.get("/parametros/default/valores")
+def get_default(_=Depends(sesion)):
+    return {"ok": True, "params": get_default_params(),
+            "etiquetas": ETIQUETAS, "campos": CAMPOS}
+
+
 # ============================================================
 #  CARGA
 # ============================================================
 
 @router.get("/formato")
-def get_formato(_=Depends(sesion)):
-    """Descarga el Excel de formato, con la estructura A–ED en blanco."""
+def get_formato(desde: int | None = Query(None,
+                description="Año del que precargar las identificaciones"),
+                _=Depends(sesion)):
+    """Descarga el Excel de formato con sus cuatro hojas."""
+    idents = repo.identificaciones_de_campana(desde) if desde else None
+    ferts = repo.fertilizantes_de_campana(desde) if desde else None
     return Response(
-        content=generar_formato(), media_type=XLSX,
+        content=generar_formato(idents, ferts or None), media_type=XLSX,
         headers={"Content-Disposition":
                  'attachment; filename="formato_fertilizacion.xlsx"'})
 
@@ -127,14 +140,11 @@ async def post_carga(
     reemplazar: bool = Form(False),
     usuario=Depends(sesion),
 ):
-    """
-    Sube el Excel completo de una campaña.
-    reemplazar=True borra los lotes existentes del año antes de cargar.
-    """
     if not archivo.filename.lower().endswith((".xlsx", ".xlsm")):
         raise HTTPException(400, "El archivo debe ser .xlsx")
 
-    lotes, advertencias = leer_excel(await archivo.read())
+    resultado, advertencias = leer_excel(await archivo.read())
+    lotes = (resultado or {}).get("lotes") or []
     if not lotes:
         raise HTTPException(400, {"mensaje": "No se cargó nada.",
                                   "advertencias": advertencias})
@@ -147,29 +157,64 @@ async def post_carga(
         if reemplazar:
             borrados = repo.borrar_lotes_de_campana(cur, campana_id)
 
-        for registro in lotes:
-            if repo.guardar_lote(cur, campana_id, registro):
+        for reg in lotes:
+            if repo.guardar_lote(cur, campana_id, reg):
                 nuevos += 1
             else:
                 actualizados += 1
 
+        # Asegura que los fertilizantes nuevos tengan precio (en 0)
+        ferts = sorted({f for l in lotes
+                        for f in (l.get("bloques", {}).get("requerimiento") or {})})
+        if ferts:
+            cur.execute("""
+                SELECT params FROM plantacion.fert_parametros WHERE campana_id=%s
+            """, (campana_id,))
+            fila = cur.fetchone()
+            actuales = (fila or {}).get("params") or get_default_params()
+            repo.guardar_parametros_cur(cur, campana_id,
+                                        asegurar_precios(actuales, ferts))
+
     return {"ok": True, "anio": anio, "archivo": archivo.filename,
             "lotes_leidos": len(lotes), "nuevos": nuevos,
             "actualizados": actualizados, "borrados": borrados,
+            "hojas": resultado.get("hojas_leidas", []),
+            "columnas": resultado.get("columnas", {}),
             "advertencias": advertencias}
 
 
 # ============================================================
-#  LOTES
+#  LOTES Y DIAGNÓSTICO
 # ============================================================
 
 @router.get("/lotes")
 def get_lotes(anio: int = Query(...), zona: str | None = Query(None),
+              sector: str | None = Query(None),
               rango_edad: str | None = Query(None), _=Depends(sesion)):
-    lotes, _p = _lotes_preparados(anio, zona, rango_edad)
-    filtros = repo.filtros_de_campana(anio)
-    return {"ok": True, "anio": anio, "total": len(lotes),
-            "lotes": lotes, **filtros}
+    lotes, _p, ferts = _cargar(anio, zona, sector, rango_edad)
+    nutrientes = ordenar_nutrientes(
+        {k for l in lotes for k in (l.get("balance") or {})})
+    return {"ok": True, "anio": anio, "total": len(lotes), "lotes": lotes,
+            "fertilizantes": ferts, "nutrientes": nutrientes,
+            **repo.filtros_de_campana(anio)}
+
+
+@router.get("/diagnostico")
+def get_diagnostico(anio: int = Query(...), zona: str | None = Query(None),
+                    sector: str | None = Query(None),
+                    rango_edad: str | None = Query(None), _=Depends(sesion)):
+    """Análisis foliar del laboratorio, por lote y nutriente."""
+    lotes, _p, _f = _cargar(anio, zona, sector, rango_edad)
+    nutrientes = ordenar_nutrientes(
+        {k for l in lotes for k in (l.get("foliar") or {})})
+    salida = [{"id": l["id"], "identificacion": l["identificacion"],
+               "uma": l.get("uma"), "zona": l.get("zona"),
+               "sector": l.get("sector"), "rango_edad": l.get("rango_edad"),
+               "palmas": l.get("palmas"), "mst": l.get("mst"),
+               "foliar": l.get("foliar") or {}} for l in lotes]
+    return {"ok": True, "anio": anio, "total": len(salida),
+            "nutrientes": nutrientes, "lotes": salida,
+            **repo.filtros_de_campana(anio)}
 
 
 @router.get("/lotes/{lote_id}")
@@ -178,13 +223,13 @@ def get_lote(lote_id: int, anio: int = Query(...), _=Depends(sesion)):
     if not fila:
         raise HTTPException(404, "Lote no encontrado.")
     params = repo.parametros_o_default(anio)
-    return {"ok": True,
-            "lote": preparar_lote({k: _limpiar(v) for k, v in fila.items()}, params)}
+    return {"ok": True, "lote": preparar_lote(
+        {k: _limpiar(v) for k, v in fila.items()}, params)}
 
 
 @router.put("/lotes/{lote_id}")
 def put_lote(lote_id: int, datos: dict = Body(...), _=Depends(sesion)):
-    if not repo.actualizar_base(lote_id, datos):
+    if not repo.actualizar_lote(lote_id, datos):
         raise HTTPException(404, "Lote no encontrado o sin campos válidos.")
     return {"ok": True, "id": lote_id}
 
@@ -202,32 +247,33 @@ def delete_lote(lote_id: int, _=Depends(sesion)):
 
 @router.get("/consolidado")
 def get_consolidado(anio: int = Query(...),
-                    por: str = Query("zona", pattern="^(zona|rango_edad|material)$"),
+                    por: str = Query("zona",
+                        pattern="^(zona|sector|rango_edad|material)$"),
                     _=Depends(sesion)):
-    lotes, params = _lotes_preparados(anio)
+    lotes, params, ferts = _cargar(anio)
     if not lotes:
         return {"ok": True, "anio": anio, "grupos": [], "total": {}}
-    r = consolidar(lotes, por, params)
-    return {"ok": True, "anio": anio, "agrupado_por": por, **r,
-            "productos": [{"clave": c, "nombre": n} for _, c, n in PRODUCTOS]}
+    r = consolidar(lotes, por, params, ferts)
+    return {"ok": True, "anio": anio, "agrupado_por": por,
+            "fertilizantes": ferts, **r}
 
 
 @router.get("/dashboard")
 def get_dashboard(anio: int = Query(...), _=Depends(sesion)):
-    """Todo lo que necesita la pantalla de indicadores, en una sola llamada."""
-    lotes, params = _lotes_preparados(anio)
+    """Todo lo que necesita la pantalla de resumen, en una sola llamada."""
+    lotes, params, ferts = _cargar(anio)
     if not lotes:
         return {"ok": True, "anio": anio, "vacio": True}
 
-    por_zona = consolidar(lotes, "zona", params)
-    por_edad = consolidar(lotes, "rango_edad", params)
-    nutricion = resumen_nutricional(lotes, params)
+    por_zona = consolidar(lotes, "zona", params, ferts)
+    por_sector = consolidar(lotes, "sector", params, ferts)
+    por_edad = consolidar(lotes, "rango_edad", params, ferts)
 
-    productos = [{"clave": c, "nombre": n,
-                  "toneladas": por_zona["total"].get(c, 0),
-                  "costo": por_zona["total"].get(c, 0) *
-                           params["precios"].get(c, 0)}
-                 for _, c, n in PRODUCTOS]
+    precios = params.get("precios", {})
+    productos = [{"nombre": f,
+                  "cantidad": por_zona["total"].get(f, 0),
+                  "costo": por_zona["total"].get(f, 0) * (precios.get(f) or 0)}
+                 for f in ferts]
 
     top = sorted(lotes, key=lambda l: l["costos"]["costo_total"], reverse=True)[:10]
 
@@ -235,29 +281,31 @@ def get_dashboard(anio: int = Query(...), _=Depends(sesion)):
         "ok": True, "anio": anio, "vacio": False,
         "total": por_zona["total"],
         "por_zona": por_zona["grupos"],
+        "por_sector": por_sector["grupos"],
         "por_edad": por_edad["grupos"],
-        "nutricion": nutricion,
+        "nutricion": resumen_nutricional(lotes, params),
         "productos": productos,
-        "top_lotes": [{"identificacion": l["identificacion"], "zona": l["zona"],
-                       "palmas": l["palmas"],
-                       "toneladas": l["costos"]["toneladas"],
+        "top_lotes": [{"identificacion": l["identificacion"],
+                       "zona": l.get("zona"), "sector": l.get("sector"),
+                       "palmas": l.get("palmas"),
+                       "cantidad": l["costos"]["cantidad"],
                        "costo": l["costos"]["costo_total"]} for l in top],
-        "nutrientes": [{"clave": n, "nombre": ETIQUETA_NUTRIENTE[n]}
-                       for n in NUTRIENTES],
+        "sin_precio": [f for f in ferts if not precios.get(f)],
     }
 
 
 @router.get("/comparativo")
-def get_comparativo(anios: str = Query(..., description="Ej: 2024,2025"),
+def get_comparativo(anios: str = Query(..., description="Ej: 2025,2026"),
                     _=Depends(sesion)):
-    datos = {}
+    datos, todos = {}, set()
     for texto in anios.split(","):
         texto = texto.strip()
         if not texto.isdigit():
             continue
         anio = int(texto)
-        lotes, params = _lotes_preparados(anio)
+        lotes, params, ferts = _cargar(anio)
         if lotes:
-            datos[anio] = consolidar(lotes, "zona", params)
+            datos[anio] = consolidar(lotes, "zona", params, ferts)
+            todos.update(ferts)
     return {"ok": True, "campanas": comparar_campanas(datos),
-            "productos": [{"clave": c, "nombre": n} for _, c, n in PRODUCTOS]}
+            "fertilizantes": sorted(todos)}

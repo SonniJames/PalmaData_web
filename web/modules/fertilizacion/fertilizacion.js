@@ -1,17 +1,19 @@
 // ============================================================
 // PalmaData · Fertilización
 // El sistema no recalcula la agronomía: muestra lo que trae el
-// Excel del ingeniero y le suma consolidación, costos y gráficas.
+// Excel y le suma consolidación, costos y gráficas.
 // ============================================================
 import { API } from './api.js';
 
 const S = {
-  anio: null, campanas: [], zona: 'Todas', rangoEdad: 'Todas',
-  zonas: [], rangos: [], tab: 'resumen', lotes: [], params: null,
+  anio: null, campanas: [],
+  zona: 'Todas', sector: 'Todos', rangoEdad: 'Todas',
+  zonas: [], sectores: [], rangos: [],
+  fertilizantes: [], nutrientes: [],
+  tab: 'resumen', lotes: [], params: null,
 };
 
 const $ = (s, c = document) => c.querySelector(s);
-
 const n0 = v => (v == null || isNaN(v)) ? '—' : Math.round(v).toLocaleString('es-CO');
 const n2 = (v, d = 2) => (v == null || isNaN(v)) ? '—'
   : Number(v).toLocaleString('es-CO', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -52,6 +54,7 @@ function esqueleto(cont) {
   cont.innerHTML = `
     <div class="fbar">
       <div class="g"><label for="fA">Campaña</label><select id="fA">${ops}</select></div>
+      <div class="g"><label for="fS">Sector</label><select id="fS"><option>Todos</option></select></div>
       <div class="g"><label for="fZ">Zona</label><select id="fZ"><option>Todas</option></select></div>
       <div class="g"><label for="fE">Edad</label><select id="fE"><option>Todas</option></select></div>
       <div class="sp"></div>
@@ -59,14 +62,20 @@ function esqueleto(cont) {
     </div>
     <div class="ftabs">
       <button class="ftab" data-tab="resumen">Resumen</button>
-      <button class="ftab" data-tab="lotes">Lotes</button>
+      <button class="ftab" data-tab="diagnostico">Diagnóstico</button>
+      <button class="ftab" data-tab="balance">Índice de balance</button>
       <button class="ftab" data-tab="plan">Plan y costos</button>
       <button class="ftab" data-tab="parametros">Parámetros</button>
       <button class="ftab" data-tab="datos">Cargar datos</button>
     </div>
     <div id="fC"></div>`;
 
-  $('#fA').onchange = e => { S.anio = +e.target.value; S.zona = 'Todas'; S.rangoEdad = 'Todas'; cargar(); };
+  $('#fA').onchange = e => {
+    S.anio = +e.target.value;
+    S.zona = 'Todas'; S.sector = 'Todos'; S.rangoEdad = 'Todas';
+    cargar();
+  };
+  $('#fS').onchange = e => { S.sector = e.target.value; S.zona = 'Todas'; cargar(); };
   $('#fZ').onchange = e => { S.zona = e.target.value; cargar(); };
   $('#fE').onchange = e => { S.rangoEdad = e.target.value; cargar(); };
   $('#fR').onclick = cargar;
@@ -83,18 +92,21 @@ async function cargar() {
   if (S.tab === 'parametros') return vistaParams(c);
   if (S.tab === 'datos') return vistaCarga(c);
   if (S.tab === 'resumen') return vistaResumen(c);
+  if (S.tab === 'diagnostico') return vistaDiagnostico(c);
 
   c.innerHTML = `<div class="cargando">Cargando…</div>`;
   try {
-    const r = await API.lotes(S.anio, { zona: S.zona, rangoEdad: S.rangoEdad });
+    const f = { zona: S.zona, sector: S.sector, rangoEdad: S.rangoEdad };
+    const r = await API.lotes(S.anio, f);
     S.lotes = r.lotes || [];
-    S.zonas = r.zonas || []; S.rangos = r.rangos_edad || [];
-    filtros();
+    S.zonas = r.zonas || []; S.sectores = r.sectores || []; S.rangos = r.rangos_edad || [];
+    S.fertilizantes = r.fertilizantes || []; S.nutrientes = r.nutrientes || [];
+    pintarFiltros();
   } catch (e) {
     c.innerHTML = `<div class="msg msg-err">${esc(e.message)}</div>`; return;
   }
   if (!S.lotes.length) return vacio(c);
-  S.tab === 'lotes' ? vistaLotes(c) : vistaPlan(c);
+  S.tab === 'balance' ? vistaBalance(c) : vistaPlan(c);
 }
 
 function vacio(c) {
@@ -102,16 +114,19 @@ function vacio(c) {
     <p>Carga el Excel en la pestaña <strong>Cargar datos</strong>.</p></div>`;
 }
 
-function filtros() {
-  const z = $('#fZ'), e = $('#fE');
-  if (z) z.innerHTML = ['Todas', ...S.zonas].map(v =>
-    `<option ${v === S.zona ? 'selected' : ''}>${esc(v)}</option>`).join('');
-  if (e) e.innerHTML = ['Todas', ...S.rangos].map(v =>
-    `<option ${v === S.rangoEdad ? 'selected' : ''}>${esc(v)}</option>`).join('');
+function pintarFiltros() {
+  const set = (sel, valores, actual) => {
+    const el = $(sel);
+    if (el) el.innerHTML = valores.map(v =>
+      `<option ${v === actual ? 'selected' : ''}>${esc(v)}</option>`).join('');
+  };
+  set('#fS', ['Todos', ...S.sectores], S.sector);
+  set('#fZ', ['Todas', ...S.zonas], S.zona);
+  set('#fE', ['Todas', ...S.rangos], S.rangoEdad);
 }
 
 // ============================================================
-//  RESUMEN · indicadores y gráficas
+//  RESUMEN
 // ============================================================
 async function vistaResumen(c) {
   c.innerHTML = `<div class="cargando">Calculando indicadores…</div>`;
@@ -121,26 +136,36 @@ async function vistaResumen(c) {
   if (d.vacio) return vacio(c);
 
   const t = d.total;
+  const aviso = (d.sin_precio || []).length ? `
+    <div class="msg msg-warn" style="margin-bottom:18px">
+      Estos fertilizantes no tienen precio en la campaña ${S.anio}, así que no
+      suman al costo: <strong>${d.sin_precio.map(esc).join(', ')}</strong>.
+      Ponlos en la pestaña Parámetros.
+    </div>` : '';
+
   c.innerHTML = `
+    ${aviso}
     <div class="kpis">
       <div class="kpi"><div class="l">Lotes</div><div class="v">${n0(t.lotes)}</div></div>
       <div class="kpi"><div class="l">Palmas</div><div class="v">${n0(t.palmas)}</div></div>
-      <div class="kpi"><div class="l">Fertilizante</div><div class="v">${n2(t.toneladas, 1)}</div><div class="s">toneladas</div></div>
+      <div class="kpi"><div class="l">Fertilizante</div><div class="v">${n2(t.cantidad, 1)}</div><div class="s">toneladas</div></div>
       <div class="kpi acc"><div class="l">Costo estimado</div><div class="v">${copM(t.costo_total)}</div><div class="s">COP · ${S.anio}</div></div>
       <div class="kpi"><div class="l">Costo por palma</div><div class="v">${cop(t.costo_por_palma)}</div></div>
-      ${t.ejecucion_pct != null ? `<div class="kpi"><div class="l">Presupuesto</div><div class="v">${n2(t.ejecucion_pct, 1)}%</div><div class="s">ejecutado</div></div>` : ''}
+      ${t.costo_por_hectarea ? `<div class="kpi"><div class="l">Costo por hectárea</div>
+        <div class="v">${cop(t.costo_por_hectarea)}</div>
+        <div class="s">${n2(t.hectareas_usadas, 0)} ha</div></div>` : ''}
     </div>
 
     <div class="grid2">
       <div class="card">
         <h3>Fertilizante por producto</h3>
-        <p class="sub">Toneladas del plan de la campaña ${S.anio}.</p>
-        ${barras(d.productos.map(p => ({ etiqueta: p.nombre, valor: p.toneladas })), ' t')}
+        <p class="sub">Cantidad total del plan de ${S.anio}.</p>
+        ${barras(d.productos.map(p => ({ etiqueta: p.nombre, valor: p.cantidad })), ' t')}
       </div>
       <div class="card">
-        <h3>Costo por zona</h3>
-        <p class="sub">Distribución del presupuesto de fertilización.</p>
-        ${barras(d.por_zona.map(g => ({ etiqueta: g.grupo, valor: g.costo_total })), '', copM)}
+        <h3>Costo por sector</h3>
+        <p class="sub">Distribución del presupuesto por finca.</p>
+        ${barras((d.por_sector || []).map(g => ({ etiqueta: g.grupo, valor: g.costo_total })), '', copM)}
       </div>
     </div>
 
@@ -157,68 +182,146 @@ async function vistaResumen(c) {
 
     <div class="grid2">
       <div class="card">
-        <h3>Toneladas por rango de edad</h3>
-        <p class="sub">Cómo se reparte el fertilizante según la edad del cultivo.</p>
-        ${barras(d.por_edad.map(g => ({ etiqueta: g.grupo, valor: g.toneladas })), ' t')}
+        <h3>Costo por zona</h3>
+        <p class="sub">Dónde se concentra la inversión.</p>
+        ${barras((d.por_zona || []).map(g => ({ etiqueta: g.grupo, valor: g.costo_total })), '', copM)}
       </div>
       <div class="card">
-        <h3>Lotes de mayor costo</h3>
-        <p class="sub">Los diez que más pesan en el presupuesto.</p>
-        <div class="twrap" style="max-height:330px">
-          <table class="ft">
-            <thead><tr><th>Lote</th><th>Zona</th><th class="num">Ton</th><th class="num">Costo</th></tr></thead>
-            <tbody>${d.top_lotes.map(l => `<tr>
-              <td class="ln">${esc(l.identificacion)}</td><td>${esc(l.zona ?? '—')}</td>
-              <td class="num">${n2(l.toneladas, 1)}</td><td class="num">${copM(l.costo)}</td>
-            </tr>`).join('')}</tbody>
-          </table>
-        </div>
+        <h3>Toneladas por rango de edad</h3>
+        <p class="sub">Cómo se reparte el fertilizante según la edad del cultivo.</p>
+        ${barras((d.por_edad || []).map(g => ({ etiqueta: g.grupo, valor: g.cantidad })), ' t')}
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Lotes de mayor costo</h3>
+      <p class="sub">Los diez que más pesan en el presupuesto.</p>
+      <div class="twrap" style="max-height:340px">
+        <table class="ft">
+          <thead><tr><th>Lote</th><th>Sector</th><th>Zona</th>
+            <th class="num">Ton</th><th class="num">Costo</th></tr></thead>
+          <tbody>${d.top_lotes.map(l => `<tr>
+            <td class="ln">${esc(l.identificacion)}</td>
+            <td>${esc(l.sector ?? '—')}</td><td>${esc(l.zona ?? '—')}</td>
+            <td class="num">${n2(l.cantidad, 1)}</td>
+            <td class="num">${copM(l.costo)}</td></tr>`).join('')}</tbody>
+        </table>
       </div>
     </div>`;
 }
 
-// --- Gráfica de barras horizontales ---
 function barras(datos, sufijo = '', fmt = null) {
-  const validos = datos.filter(d => d.valor > 0);
+  const validos = (datos || []).filter(d => d.valor > 0);
   if (!validos.length) return `<p style="color:var(--ink-soft);font-size:13px">Sin datos.</p>`;
   const max = Math.max(...validos.map(d => d.valor));
-
   return `<div class="bars">${validos.map((d, i) => {
     const pct = Math.max(1.5, (d.valor / max) * 100);
     const texto = fmt ? fmt(d.valor) : n2(d.valor, 1) + sufijo;
     return `<div class="barrow">
-        <div class="bl" title="${esc(d.etiqueta)}">${esc(String(d.etiqueta).slice(0, 22))}</div>
+        <div class="bl" title="${esc(d.etiqueta)}">${esc(String(d.etiqueta).slice(0, 24))}</div>
         <div class="btrack"><div class="bfill" style="width:${pct}%;background:${COLORES[i % COLORES.length]}"></div></div>
         <div class="bv">${texto}</div>
       </div>`;
   }).join('')}</div>`;
 }
 
-// --- Barras apiladas de estado nutricional ---
 function barrasEstado(nutricion) {
   const total = nutricion.total_lotes || 1;
   const estados = ['deficiente', 'bajo', 'optimo', 'excesivo', 'sin-dato'];
-  return nutricion.nutrientes.map(n => {
-    const segmentos = estados.map(e => {
-      const v = n[e] || 0;
-      if (!v) return '';
-      const pct = (v / total * 100).toFixed(2);
-      return `<span style="width:${pct}%;background:${COL_ESTADO[e]}" title="${e}: ${v} lotes"></span>`;
-    }).join('');
-    return `<div class="nutrow">
-        <div class="nm">${esc(n.nutriente)}</div>
-        <div class="nutbar">${segmentos}</div>
-        <div class="pr">${n2(n.promedio, 0)}%</div>
-      </div>`;
-  }).join('');
+  return nutricion.nutrientes.map(n => `
+    <div class="nutrow">
+      <div class="nm">${esc(n.nutriente)}</div>
+      <div class="nutbar">${estados.map(e => {
+        const v = n[e] || 0;
+        if (!v) return '';
+        return `<span style="width:${(v / total * 100).toFixed(2)}%;background:${COL_ESTADO[e]}" title="${e}: ${v} lotes"></span>`;
+      }).join('')}</div>
+      <div class="pr">${n2(n.promedio, 0)}%</div>
+    </div>`).join('');
 }
 
 // ============================================================
-//  LOTES · análisis foliar e índice
+//  DIAGNÓSTICO · análisis foliar del laboratorio
 // ============================================================
-function vistaLotes(c) {
-  const nut = ['n', 'p', 'k', 'ca', 'mg', 's', 'b', 'cu', 'fe', 'mn', 'zn'];
-  const et = { n: 'N', p: 'P', k: 'K', ca: 'Ca', mg: 'Mg', s: 'S', b: 'B', cu: 'Cu', fe: 'Fe', mn: 'Mn', zn: 'Zn' };
+async function vistaDiagnostico(c) {
+  c.innerHTML = `<div class="cargando">Cargando análisis foliar…</div>`;
+  let d;
+  try {
+    d = await API.diagnostico(S.anio, { zona: S.zona, sector: S.sector, rangoEdad: S.rangoEdad });
+  } catch (e) { c.innerHTML = `<div class="msg msg-err">${esc(e.message)}</div>`; return; }
+
+  S.zonas = d.zonas || []; S.sectores = d.sectores || []; S.rangos = d.rangos_edad || [];
+  pintarFiltros();
+
+  if (!d.lotes.length) return vacio(c);
+  const nut = d.nutrientes || [];
+
+  if (!nut.length) {
+    c.innerHTML = `<div class="vacio"><h3>Sin análisis foliar</h3>
+      <p>El Excel de ${S.anio} no trae la hoja <strong>anal_foliar</strong>.</p></div>`;
+    return;
+  }
+
+  // Promedio por nutriente
+  const prom = {};
+  nut.forEach(n => {
+    const vals = d.lotes.map(l => l.foliar[n]).filter(v => v != null && !isNaN(v));
+    prom[n] = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  });
+
+  c.innerHTML = `
+    <div class="kpis">
+      <div class="kpi"><div class="l">Lotes analizados</div><div class="v">${n0(d.lotes.length)}</div></div>
+      <div class="kpi"><div class="l">Nutrientes</div><div class="v">${nut.length}</div></div>
+      <div class="kpi"><div class="l">Campaña</div><div class="v">${S.anio}</div></div>
+    </div>
+
+    <div class="card">
+      <h3>Promedio de la plantación</h3>
+      <p class="sub">Valor medio de cada nutriente en los lotes seleccionados.</p>
+      <div class="proms">
+        ${nut.map(n => `<div class="prom">
+            <div class="pn">${esc(n)}</div>
+            <div class="pv">${prom[n] == null ? '—' : n2(prom[n], prom[n] < 10 ? 3 : 1)}</div>
+          </div>`).join('')}
+      </div>
+    </div>
+
+    <div class="twrap">
+      <table class="ft">
+        <thead><tr>
+          <th>Lote</th><th class="num">UMA</th><th>Sector</th><th>Zona</th>
+          <th>Edad</th><th class="num">Palmas</th><th class="num">M.S.T</th>
+          ${nut.map(n => `<th class="num">${esc(n)}</th>`).join('')}
+        </tr></thead>
+        <tbody>${d.lotes.map(l => `<tr>
+          <td class="ln">${esc(l.identificacion)}</td>
+          <td class="num">${l.uma ?? '—'}</td>
+          <td>${esc(l.sector ?? '—')}</td>
+          <td>${esc(l.zona ?? '—')}</td>
+          <td>${esc(l.rango_edad ?? '—')}</td>
+          <td class="num">${n0(l.palmas)}</td>
+          <td class="num">${n2(l.mst, 1)}</td>
+          ${nut.map(n => {
+            const v = l.foliar[n];
+            return `<td class="num">${v == null ? '—' : n2(v, v < 10 ? 3 : 1)}</td>`;
+          }).join('')}
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+// ============================================================
+//  ÍNDICE DE BALANCE
+// ============================================================
+function vistaBalance(c) {
+  const nut = S.nutrientes;
+  if (!nut.length) {
+    c.innerHTML = `<div class="vacio"><h3>Sin índice de balance</h3>
+      <p>El Excel de ${S.anio} no trae la hoja <strong>ind_balan</strong>.</p></div>`;
+    return;
+  }
+
   const palmas = S.lotes.reduce((a, l) => a + (l.palmas || 0), 0);
   const tons = S.lotes.reduce((a, l) => a + (+l.tons || 0), 0);
 
@@ -228,26 +331,21 @@ function vistaLotes(c) {
       <div class="kpi"><div class="l">Palmas</div><div class="v">${n0(palmas)}</div></div>
       <div class="kpi"><div class="l">Cosecha esperada</div><div class="v">${n0(tons)}</div><div class="s">toneladas</div></div>
     </div>
-    <div class="card" style="padding:14px 18px">
-      <p class="sub" style="margin:0">Valores tal como vienen del Excel. El color aplica los
-      umbrales de la campaña; los números no se recalculan.</p>
-    </div>
     <div class="twrap">
       <table class="ft">
         <thead><tr>
-          <th>Lote</th><th>Zona</th><th>Edad</th><th class="num">Palmas</th>
-          <th class="num">M.S.T</th><th class="num">Tons</th>
-          ${nut.map(k => `<th class="num">${et[k]}</th>`).join('')}
+          <th>Lote</th><th>Sector</th><th>Zona</th><th>Edad</th>
+          <th class="num">Palmas</th>
+          ${nut.map(n => `<th class="num">${esc(n)}</th>`).join('')}
         </tr></thead>
         <tbody>${S.lotes.map(l => `<tr>
           <td class="ln">${esc(l.identificacion)}</td>
+          <td>${esc(l.sector ?? '—')}</td>
           <td>${esc(l.zona ?? '—')}</td>
           <td>${esc(l.rango_edad ?? '—')}</td>
           <td class="num">${n0(l.palmas)}</td>
-          <td class="num">${n2(l.mst, 1)}</td>
-          <td class="num">${n0(l.tons)}</td>
-          ${nut.map(k => `<td class="num"><span class="sem sem-${l.semaforo[k]}">${
-            l.indice?.[k] ? n2(l.indice[k], 0) + '%' : '—'}</span></td>`).join('')}
+          ${nut.map(n => `<td class="num"><span class="sem sem-${l.semaforo?.[n] || 'sin-dato'}">${
+            l.balance?.[n] != null ? n2(l.balance[n], 0) + '%' : '—'}</span></td>`).join('')}
         </tr>`).join('')}</tbody>
       </table>
     </div>`;
@@ -257,39 +355,49 @@ function vistaLotes(c) {
 //  PLAN Y COSTOS
 // ============================================================
 function vistaPlan(c) {
-  const prods = [['t_grado', 'Grado'], ['t_nca', 'NCa'], ['t_rafos', 'Rafos'],
-    ['t_ksomgo', 'KSOMgO'], ['t_kieserita', 'Kieserita'],
-    ['t_borax', 'Bórax'], ['t_znso4', 'ZnSO4']];
+  const ferts = S.fertilizantes;
+  if (!ferts.length) {
+    c.innerHTML = `<div class="vacio"><h3>Sin plan de fertilización</h3>
+      <p>El Excel de ${S.anio} no trae la hoja <strong>reque_fert</strong>.</p></div>`;
+    return;
+  }
 
-  const tot = {}; prods.forEach(([k]) => tot[k] = 0);
-  let costo = 0, ton = 0;
+  const tot = {}; ferts.forEach(f => tot[f] = 0);
+  let costo = 0, cant = 0, ha = 0;
   S.lotes.forEach(l => {
-    prods.forEach(([k]) => tot[k] += +(l.toneladas?.[k] || 0));
-    costo += l.costos.costo_total; ton += l.costos.toneladas;
+    ferts.forEach(f => tot[f] += +(l.requerimiento?.[f] || 0));
+    costo += l.costos.costo_total;
+    cant += l.costos.cantidad;
+    ha += +(l.hectareas || 0);
   });
+  const palmas = S.lotes.reduce((a, l) => a + (l.palmas || 0), 0);
+  const principal = ferts.reduce((a, b) => tot[a] >= tot[b] ? a : b, ferts[0]);
 
   c.innerHTML = `
     <div class="kpis">
-      <div class="kpi"><div class="l">Fertilizante</div><div class="v">${n2(ton, 1)}</div><div class="s">toneladas</div></div>
+      <div class="kpi"><div class="l">Fertilizante</div><div class="v">${n2(cant, 1)}</div><div class="s">toneladas</div></div>
       <div class="kpi acc"><div class="l">Costo</div><div class="v">${copM(costo)}</div>
-        <div class="s">${S.zona === 'Todas' ? 'toda la plantación' : esc(S.zona)}</div></div>
-      <div class="kpi"><div class="l">Grado compuesto</div><div class="v">${n2(tot.t_grado, 1)}</div><div class="s">toneladas</div></div>
-      <div class="kpi"><div class="l">Lotes</div><div class="v">${n0(S.lotes.length)}</div></div>
+        <div class="s">${S.sector !== 'Todos' ? esc(S.sector) : (S.zona !== 'Todas' ? esc(S.zona) : 'toda la plantación')}</div></div>
+      <div class="kpi"><div class="l">${esc(principal)}</div><div class="v">${n2(tot[principal], 1)}</div><div class="s">toneladas</div></div>
+      <div class="kpi"><div class="l">Costo por palma</div><div class="v">${cop(palmas ? costo / palmas : null)}</div></div>
+      ${ha ? `<div class="kpi"><div class="l">Costo por hectárea</div>
+        <div class="v">${cop(costo / ha)}</div><div class="s">${n2(ha, 0)} ha</div></div>` : ''}
     </div>
     <div class="twrap">
       <table class="ft">
-        <thead><tr><th>Lote</th><th>Zona</th><th class="num">Palmas</th>
-          ${prods.map(([, n]) => `<th class="num">${n}</th>`).join('')}
+        <thead><tr><th>Lote</th><th>Sector</th><th>Zona</th><th class="num">Palmas</th>
+          ${ferts.map(f => `<th class="num">${esc(f)}</th>`).join('')}
           <th class="num">Costo</th></tr></thead>
         <tbody>${S.lotes.map(l => `<tr>
           <td class="ln">${esc(l.identificacion)}</td>
+          <td>${esc(l.sector ?? '—')}</td>
           <td>${esc(l.zona ?? '—')}</td>
           <td class="num">${n0(l.palmas)}</td>
-          ${prods.map(([k]) => `<td class="num">${n2(l.toneladas?.[k])}</td>`).join('')}
+          ${ferts.map(f => `<td class="num">${n2(l.requerimiento?.[f])}</td>`).join('')}
           <td class="num">${cop(l.costos.costo_total)}</td>
         </tr>`).join('')}</tbody>
-        <tfoot><tr><td colspan="3">Total</td>
-          ${prods.map(([k]) => `<td class="num">${n2(tot[k])}</td>`).join('')}
+        <tfoot><tr><td colspan="4">Total</td>
+          ${ferts.map(f => `<td class="num">${n2(tot[f])}</td>`).join('')}
           <td class="num">${cop(costo)}</td></tr></tfoot>
       </table>
     </div>`;
@@ -304,61 +412,97 @@ async function vistaParams(c) {
   try { r = await API.parametros(S.anio); }
   catch (e) {
     c.innerHTML = `<div class="msg msg-err">${esc(e.message)}<br>
-      Crea la campaña ${S.anio} cargando un Excel primero.</div>`; return;
+      Carga primero un Excel para la campaña ${S.anio}.</div>`; return;
   }
   S.params = r.params;
-  const eti = r.etiquetas || {}, campos = r.campos || {};
+  const ferts = r.fertilizantes || [];
+  const campos = r.campos || {};
+  const b = S.params.bands || {};
 
-  const grupos = Object.entries(S.params).map(([g, vals]) => {
-    if (!vals || typeof vals !== 'object') return '';
-    const fs = Object.entries(vals).filter(([, v]) => typeof v === 'number')
-      .map(([k, v]) => `<div class="pf">
-        <label for="p_${g}_${k}">${esc(campos[k] || k)}</label>
-        <input type="number" step="any" id="p_${g}_${k}" data-g="${g}" data-k="${k}" value="${v}">
-      </div>`).join('');
-    if (!fs) return '';
-    return `<div class="pgrp">
-        <button class="phead" data-t="${g}"><span>${esc(eti[g] || g)}</span><span class="ar">▸</span></button>
-        <div class="pbody" data-b="${g}">${fs}</div>
-      </div>`;
-  }).join('');
+  const bloquePrecios = ferts.length ? `
+    <div class="pgrp">
+      <button class="phead open" data-t="precios">
+        <span>Precios de fertilizantes · campaña ${S.anio}</span><span class="ar">▸</span></button>
+      <div class="pbody open" data-b="precios">
+        ${ferts.map(f => `<div class="pf">
+          <label for="pr_${esc(f)}">${esc(f)}</label>
+          <input type="number" step="any" data-precio="${esc(f)}"
+                 value="${S.params.precios?.[f] ?? 0}">
+        </div>`).join('')}
+      </div>
+    </div>`
+    : `<div class="msg msg-warn">Aún no hay fertilizantes cargados para ${S.anio}.
+        Sube el Excel y aquí aparecerán sus productos para ponerles precio.</div>`;
 
   c.innerHTML = `
     <div class="card">
       <h3>Parámetros de la campaña ${S.anio}</h3>
-      <p class="sub">El sistema no recalcula la agronomía del Excel. Aquí solo se ajusta
-        lo que el archivo no trae: precios, costos indirectos, metas y los umbrales
-        de color. Se guardan por año.</p>
+      <p class="sub">El sistema no recalcula la agronomía del Excel. Aquí se ajusta lo que
+        el archivo no trae: los precios de los fertilizantes de esta campaña, los umbrales
+        de color y las hectáreas. Todo se guarda por año, así el histórico conserva los
+        valores que regían en cada campaña.</p>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         <button class="btn btn-primary" id="pG">Guardar</button>
-        <button class="btn btn-ghost" id="pR">Restaurar valores por defecto</button>
       </div>
       <div id="pM"></div>
-    </div>${grupos}`;
+    </div>
+
+    ${bloquePrecios}
+
+    <div class="pgrp">
+      <button class="phead open" data-t="general"><span>Datos de la plantación</span><span class="ar">▸</span></button>
+      <div class="pbody open" data-b="general">
+        <div class="pf">
+          <label for="p_ha">${esc(campos.hectareas || 'Hectáreas totales')}</label>
+          <input type="number" step="any" id="p_ha" value="${S.params.hectareas ?? 0}">
+        </div>
+      </div>
+    </div>
+
+    <div class="pgrp">
+      <button class="phead" data-t="bands"><span>Umbrales del semáforo (% sobre el óptimo)</span><span class="ar">▸</span></button>
+      <div class="pbody" data-b="bands">
+        ${['deficiente', 'bajo', 'optimo'].map(k => `<div class="pf">
+          <label for="p_${k}">${esc(campos[k] || k)}</label>
+          <input type="number" step="any" id="p_${k}" data-band="${k}" value="${b[k] ?? 0}">
+        </div>`).join('')}
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="sub" style="margin:0">Si la hoja <strong>identificacion</strong> del Excel trae
+        una columna <strong>hectareas</strong> por lote, el sistema usa esa y calcula el costo
+        por hectárea de cada zona y sector. El valor de arriba es el respaldo cuando la
+        columna no viene.</p>
+    </div>`;
 
   c.querySelectorAll('.phead').forEach(h => h.onclick = () => {
     h.classList.toggle('open');
     c.querySelector(`[data-b="${h.dataset.t}"]`).classList.toggle('open');
   });
-  c.querySelector('.phead')?.click();
 
   $('#pG').onclick = async () => {
     const nuevos = JSON.parse(JSON.stringify(S.params));
-    c.querySelectorAll('input[data-g]').forEach(i => {
+    nuevos.precios = {};
+    c.querySelectorAll('input[data-precio]').forEach(i => {
       const v = parseFloat(i.value);
-      if (!isNaN(v)) nuevos[i.dataset.g][i.dataset.k] = v;
+      nuevos.precios[i.dataset.precio] = isNaN(v) ? 0 : v;
     });
+    nuevos.bands = nuevos.bands || {};
+    c.querySelectorAll('input[data-band]').forEach(i => {
+      const v = parseFloat(i.value);
+      if (!isNaN(v)) nuevos.bands[i.dataset.band] = v;
+    });
+    const ha = parseFloat($('#p_ha').value);
+    nuevos.hectareas = isNaN(ha) ? 0 : ha;
+
     try {
       await API.guardarParametros(S.anio, nuevos);
       S.params = nuevos;
       $('#pM').innerHTML = `<div class="msg msg-ok">Guardado. Los costos de ${S.anio} ya usan estos valores.</div>`;
-    } catch (e) { $('#pM').innerHTML = `<div class="msg msg-err">${esc(e.message)}</div>`; }
-  };
-
-  $('#pR').onclick = async () => {
-    if (!confirm(`¿Restaurar los valores por defecto para ${S.anio}?`)) return;
-    S.params = (await API.parametrosDefault()).params;
-    vistaParams(c);
+    } catch (e) {
+      $('#pM').innerHTML = `<div class="msg msg-err">${esc(e.message)}</div>`;
+    }
   };
 }
 
@@ -368,13 +512,13 @@ async function vistaParams(c) {
 function vistaCarga(c) {
   const hoy = new Date().getFullYear();
   const anios = []; for (let a = hoy + 1; a >= hoy - 6; a--) anios.push(a);
+  const previa = S.campanas.length ? S.campanas[0].anio : null;
 
   c.innerHTML = `
     <div class="card">
       <h3>Cargar el Excel de la campaña</h3>
-      <p class="sub">Sube el archivo del ingeniero agrónomo completo, de la columna A a la ED.
-        El sistema lo guarda tal cual: no recalcula ninguna fórmula. El año no va dentro
-        del archivo, se elige aquí.</p>
+      <p class="sub">El archivo tiene una hoja por concepto. El sistema guarda los valores
+        tal como vienen: no recalcula ninguna fórmula.</p>
 
       <div class="fbar" style="margin-bottom:16px">
         <div class="g"><label for="cA">Año</label>
@@ -382,7 +526,8 @@ function vistaCarga(c) {
         <div class="g"><label style="display:flex;align-items:center;gap:7px;cursor:pointer">
           <input type="checkbox" id="cRe"> Reemplazar todo el año</label></div>
         <div class="sp"></div>
-        <a class="btn btn-ghost" href="${API.urlFormato()}" download>Descargar formato</a>
+        <a class="btn btn-ghost" href="${API.urlFormato()}" download>Formato en blanco</a>
+        ${previa ? `<a class="btn btn-ghost" href="${API.urlFormato(previa)}" download>Formato con los lotes de ${previa}</a>` : ''}
       </div>
 
       <div class="dz" id="cZ">
@@ -391,7 +536,7 @@ function vistaCarga(c) {
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5-5 5 5"/>
           <path d="M12 5v12"/></svg></div>
         <div class="m">Arrastra el archivo aquí o haz clic para elegirlo</div>
-        <div class="s">.xlsx · hoja RESULTADOS · datos desde la fila 4</div>
+        <div class="s">.xlsx con las hojas identificacion, anal_foliar, ind_balan y reque_fert</div>
         <input type="file" id="cF" accept=".xlsx,.xlsm" hidden>
       </div>
       <div id="cCh"></div>
@@ -400,22 +545,31 @@ function vistaCarga(c) {
     </div>
 
     <div class="card">
-      <h3>Cómo usar el formato</h3>
-      <p class="sub">Para que no haya diferencias entre archivos, descarga el formato y pega
-        allí tus datos.</p>
-      <ol style="font-size:14px;color:var(--ink-soft);line-height:1.85;margin:0;padding-left:20px">
-        <li>Descarga el formato con el botón de arriba.</li>
-        <li>Abre tu Excel del año y copia el rango de datos: desde la fila 4 hacia abajo,
-            columnas A hasta ED.</li>
-        <li>Pega en la hoja RESULTADOS del formato, en la celda A4.
-            Usa <strong>Pegado especial → Valores</strong> para que no viajen las fórmulas.</li>
-        <li>Guarda y súbelo aquí.</li>
-      </ol>
+      <h3>Las hojas del archivo</h3>
+      <div class="twrap" style="max-height:none">
+        <table class="ft">
+          <thead><tr><th>Hoja</th><th>Qué contiene</th><th>Dónde se usa</th></tr></thead>
+          <tbody>
+            <tr><td class="ln">identificacion</td>
+              <td>Quién es cada lote: uma, sector, zona, rango de edad, palmas, hectáreas, mst, tons</td>
+              <td>Filtros y agrupaciones</td></tr>
+            <tr><td class="ln">anal_foliar</td>
+              <td>Resultado del laboratorio, una columna por nutriente</td>
+              <td>Pestaña Diagnóstico</td></tr>
+            <tr><td class="ln">ind_balan</td>
+              <td>Índice de balance, % sobre el óptimo</td>
+              <td>Semáforo y estado nutricional</td></tr>
+            <tr><td class="ln">reque_fert</td>
+              <td>Fertilizantes requeridos y su cantidad</td>
+              <td>Plan, costos y gráficas</td></tr>
+          </tbody>
+        </table>
+      </div>
       <p class="sub" style="margin:16px 0 0">
-        La columna D (Identificación) es la que identifica cada lote: es obligatoria y no
-        debe repetirse. Si vuelves a cargar el mismo año, los lotes se actualizan en vez
-        de duplicarse. Marca <em>Reemplazar todo el año</em> solo si quieres borrar lo
-        cargado antes y empezar de cero.</p>
+        En todas las hojas: la <strong>fila 1</strong> lleva los nombres de las columnas y la
+        <strong>columna A</strong> la identificación del lote, escrita igual en todas.
+        Los fertilizantes y nutrientes no son fijos: puedes agregar, quitar o cambiar
+        columnas entre campañas y el sistema se adapta.</p>
     </div>`;
 
   const z = $('#cZ'), inp = $('#cF'), btn = $('#cS');
@@ -443,13 +597,17 @@ function vistaCarga(c) {
       const r = await API.cargar(anio, archivo, $('#cRe').checked);
       const av = (r.advertencias || []).length
         ? `<ul>${r.advertencias.map(a => `<li>${esc(a)}</li>`).join('')}</ul>` : '';
+      const cols = r.columnas || {};
+      const detalle = Object.entries(cols).filter(([, v]) => v.length)
+        .map(([k, v]) => `<li><strong>${esc(k)}</strong>: ${v.map(esc).join(', ')}</li>`).join('');
       m.innerHTML = `<div class="msg ${av ? 'msg-warn' : 'msg-ok'}">
-        Campaña ${r.anio}: ${r.lotes_leidos} lotes leídos · ${r.nuevos} nuevos ·
-        ${r.actualizados} actualizados${r.borrados ? ` · ${r.borrados} borrados` : ''}.${av}</div>`;
+        Campaña ${r.anio}: ${r.lotes_leidos} lotes · ${r.nuevos} nuevos ·
+        ${r.actualizados} actualizados${r.borrados ? ` · ${r.borrados} borrados` : ''}.
+        ${detalle ? `<ul>${detalle}</ul>` : ''}${av}</div>`;
       S.anio = anio;
       S.campanas = (await API.campanas()).campanas || [];
-      $('#fA').innerHTML = S.campanas.map(c2 =>
-        `<option value="${c2.anio}" ${c2.anio === anio ? 'selected' : ''}>${c2.anio} · ${c2.lotes} lotes</option>`).join('');
+      $('#fA').innerHTML = S.campanas.map(x =>
+        `<option value="${x.anio}" ${x.anio === anio ? 'selected' : ''}>${x.anio} · ${x.lotes} lotes</option>`).join('');
     } catch (e) {
       m.innerHTML = `<div class="msg msg-err">${esc(e.message)}</div>`;
     } finally { btn.disabled = false; btn.textContent = 'Cargar a la base de datos'; }

@@ -1,11 +1,12 @@
 """
-PalmaData · Fertilización · Carga del Excel completo
-====================================================
-Lee el archivo del ingeniero agrónomo tal como lo entrega:
-columnas A a ED, filas 1 a 157 (o las que traiga).
+PalmaData · Fertilización · Carga y formato del Excel
+=====================================================
+Lee el archivo por HOJAS. Cada hoja sigue la misma regla:
+fila 1 = nombres de columna, columna A = identificación del lote.
 
-No recalcula nada. Solo valida, limpia y reparte cada bloque
-a su tabla, según el mapa de columnas.py
+Ninguna hoja tiene columnas fijas: lo que traiga el archivo se guarda.
+Así, si una campaña usa otros fertilizantes u otros nutrientes,
+el sistema los reconoce sin cambios de código ni de tablas.
 """
 import unicodedata
 from io import BytesIO
@@ -14,27 +15,22 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from . import columnas as COL
-
-HOJA_DATOS = "RESULTADOS"
+from . import formato as F
 
 
-def _num(valor, entero=False):
-    """Convierte a número. Texto no numérico o vacío -> None."""
-    if valor is None or valor == "":
-        return None
-    if isinstance(valor, str):
-        v = valor.strip().replace(",", ".")
-        if v in ("", "-", "—", "#N/A", "#¡DIV/0!", "#DIV/0!", "#VALUE!", "#¡VALOR!"):
-            return None
-        valor = v
-    try:
-        f = float(valor)
-    except (TypeError, ValueError):
-        return None
-    if f != f or f in (float("inf"), float("-inf")):   # NaN o infinito
-        return None
-    return int(round(f)) if entero else f
+# ============================================================
+#  Utilidades
+# ============================================================
+
+def _norm(texto) -> str:
+    """minúsculas, sin acentos, sin espacios ni símbolos."""
+    if texto is None:
+        return ""
+    t = unicodedata.normalize("NFKD", str(texto).strip().lower())
+    t = "".join(c for c in t if not unicodedata.combining(c))
+    for ch in (" ", "_", ".", "-", "/", "(", ")", "°", "%"):
+        t = t.replace(ch, "")
+    return t
 
 
 def _txt(valor):
@@ -44,246 +40,334 @@ def _txt(valor):
     return t or None
 
 
-def leer_excel(contenido: bytes) -> tuple[list[dict], list[str]]:
-    """
-    Devuelve (lotes, advertencias).
+ERRORES_EXCEL = {"#n/a", "#¡div/0!", "#div/0!", "#value!", "#¡valor!",
+                 "#ref!", "#¡ref!", "#name?", "#¿nombre?", "-", "—", ""}
 
-    Cada lote es un dict:
-      {
-        "fila_excel": 4,
-        "fert_lote":       {...},   # columnas A-K
-        "fert_foliar":     {...},   # L-W
-        "fert_secundarios":{...},   # X-AJ
-        ...
-      }
+
+def _num(valor, entero=False):
+    """Convierte a número. Vacío, texto o error de Excel -> None."""
+    if valor is None:
+        return None
+    if isinstance(valor, str):
+        v = valor.strip().replace(",", ".")
+        if v.lower() in ERRORES_EXCEL:
+            return None
+        valor = v
+    try:
+        f = float(valor)
+    except (TypeError, ValueError):
+        return None
+    if f != f or f in (float("inf"), float("-inf")):
+        return None
+    return int(round(f)) if entero else f
+
+
+def _buscar_hoja(wb, clave: str):
+    """Encuentra una hoja por su nombre o cualquiera de sus alias."""
+    alias = {_norm(a) for a in F.ALIAS_HOJAS.get(clave, [clave])}
+    for nombre in wb.sheetnames:
+        if _norm(nombre) in alias:
+            return wb[nombre]
+    return None
+
+
+def _leer_tabla(ws) -> tuple[dict[str, dict], list[str]]:
+    """
+    Lee una hoja con el formato estándar.
+    Devuelve ({identificacion: {columna: valor}}, columnas_en_orden).
+    """
+    filas = list(ws.iter_rows(values_only=True))
+    if len(filas) < 2:
+        return {}, []
+
+    cabecera = filas[0]
+    columnas = []
+    for i, h in enumerate(cabecera):
+        if i == 0:
+            continue                       # columna A = identificación
+        nombre = _txt(h)
+        if nombre:
+            columnas.append((i, nombre))
+
+    tabla: dict[str, dict] = {}
+    for fila in filas[1:]:
+        if fila is None:
+            continue
+        ident = _txt(fila[0]) if len(fila) > 0 else None
+        if not ident:
+            continue
+        tabla[ident] = {nombre: (fila[i] if i < len(fila) else None)
+                        for i, nombre in columnas}
+
+    return tabla, [n for _, n in columnas]
+
+
+# ============================================================
+#  Lectura del archivo
+# ============================================================
+
+def leer_excel(contenido: bytes) -> tuple[dict, list[str]]:
+    """
+    Devuelve (resultado, advertencias).
+
+    resultado = {
+      "lotes": [ {identificacion, uma, sector, ..., extra,
+                  bloques: {foliar:{}, balance:{}, requerimiento:{}}} ],
+      "columnas": {"foliar": [...], "balance": [...], "requerimiento": [...]},
+      "hojas_leidas": [...],
+    }
     """
     advertencias: list[str] = []
 
     try:
-        wb = load_workbook(BytesIO(contenido), data_only=True, read_only=True)
+        wb = load_workbook(BytesIO(contenido), data_only=True)
     except Exception as e:
-        return [], [f"No se pudo abrir el archivo: {e}"]
+        return {}, [f"No se pudo abrir el archivo: {e}"]
 
-    if HOJA_DATOS in wb.sheetnames:
-        ws = wb[HOJA_DATOS]
-    else:
-        ws = wb[wb.sheetnames[0]]
-        advertencias.append(
-            f"No se encontró la hoja '{HOJA_DATOS}'. Se leyó '{ws.title}'.")
+    # ---- Hoja de identificación (obligatoria) ----
+    ws_ident = _buscar_hoja(wb, F.HOJA_IDENTIFICACION)
+    if ws_ident is None:
+        return {}, [f"Falta la hoja «{F.HOJA_IDENTIFICACION}». "
+                    f"Descarga el formato desde el módulo y úsalo como base."]
 
-    filas = list(ws.iter_rows(values_only=True))
+    filas = list(ws_ident.iter_rows(values_only=True))
+    if len(filas) < 2:
+        return {}, [f"La hoja «{F.HOJA_IDENTIFICACION}» no tiene datos."]
 
-    if len(filas) <= COL.PRIMERA_FILA_DATOS:
-        return [], ["El archivo no tiene filas de datos."]
+    cabecera = filas[0]
+    mapa: dict[int, str] = {}
+    extras: dict[int, str] = {}
+    for i, h in enumerate(cabecera):
+        nombre = _txt(h)
+        if not nombre:
+            continue
+        campo = F.CAMPOS_IDENTIFICACION.get(_norm(nombre))
+        if campo:
+            mapa[i] = campo
+        else:
+            extras[i] = nombre
 
-    ancho = max(len(f) for f in filas)
-    if ancho < COL.ULTIMA_COLUMNA + 1:
-        advertencias.append(
-            f"El archivo llega hasta la columna {get_column_letter(ancho)} "
-            f"y se esperaban datos hasta ED. Las columnas faltantes quedarán vacías.")
+    if "identificacion" not in mapa.values():
+        mapa[0] = "identificacion"       # por convención, la columna A
+        extras.pop(0, None)
 
     lotes: list[dict] = []
     vistos: set[str] = set()
 
-    for n, fila in enumerate(filas[COL.PRIMERA_FILA_DATOS:],
-                             start=COL.PRIMERA_FILA_DATOS + 1):
+    for n, fila in enumerate(filas[1:], start=2):
         if fila is None:
             continue
 
-        ident = _txt(fila[3]) if len(fila) > 3 else None
+        reg: dict = {"fila_excel": n, "extra": {}}
+        for i, campo in mapa.items():
+            valor = fila[i] if i < len(fila) else None
+            if campo in F.TEXTO:
+                reg[campo] = _txt(valor)
+            elif campo in F.ENTEROS:
+                reg[campo] = _num(valor, entero=True)
+            else:
+                reg[campo] = _num(valor)
+
+        ident = reg.get("identificacion")
         if not ident:
-            continue  # fila vacía o de totales al pie
+            continue
 
         clave = ident.lower()
         if clave in vistos:
-            advertencias.append(
-                f"Fila {n}: el lote «{ident}» está repetido. Se omite.")
+            advertencias.append(f"Fila {n}: «{ident}» está repetido. Se omite.")
             continue
         vistos.add(clave)
 
-        registro: dict = {"fila_excel": n}
+        for i, nombre in extras.items():
+            valor = fila[i] if i < len(fila) else None
+            if valor is not None:
+                reg["extra"][nombre] = _num(valor) if _num(valor) is not None else _txt(valor)
 
-        for tabla, cols in COL.BLOQUES.items():
-            datos = {}
-            for indice, campo in cols:
-                valor = fila[indice] if indice < len(fila) else None
-                if campo in COL.TEXTO:
-                    datos[campo] = _txt(valor)
-                else:
-                    datos[campo] = _num(valor, entero=(campo in COL.ENTEROS))
-            registro[tabla] = datos
-
-        lotes.append(registro)
+        reg["bloques"] = {}
+        lotes.append(reg)
 
     if not lotes:
-        advertencias.append(
-            "No se encontró ningún lote. Revisa que los nombres estén en la columna D "
-            "y que los datos empiecen en la fila 4.")
+        return {}, ["No se encontró ningún lote. Revisa que la columna A "
+                    "tenga las identificaciones y la fila 1 los nombres de columna."]
 
-    # Aviso de calidad: lotes sin toneladas calculadas
-    sin_plan = [l["fert_lote"]["identificacion"] for l in lotes
-                if not any(l["fert_toneladas"].get(c) for c, _, _ in COL.PRODUCTOS)]
-    if sin_plan:
-        advertencias.append(
-            f"{len(sin_plan)} lote(s) sin toneladas en el bloque final "
-            f"(columnas DX-ED): {', '.join(sin_plan[:5])}"
-            + ("…" if len(sin_plan) > 5 else ""))
+    # ---- Hojas de datos ----
+    columnas: dict[str, list[str]] = {}
+    hojas_leidas = [F.HOJA_IDENTIFICACION]
+    por_ident = {l["identificacion"].lower(): l for l in lotes}
 
-    return lotes, advertencias
+    for clave, (nombre_hoja, _tabla, etiqueta) in F.HOJAS_DATOS.items():
+        ws = _buscar_hoja(wb, nombre_hoja)
+        if ws is None:
+            advertencias.append(
+                f"No se encontró la hoja «{nombre_hoja}» ({etiqueta}). "
+                f"Esa sección quedará vacía.")
+            columnas[clave] = []
+            continue
+
+        tabla, cols = _leer_tabla(ws)
+        columnas[clave] = cols
+        hojas_leidas.append(nombre_hoja)
+
+        if not cols:
+            advertencias.append(f"La hoja «{nombre_hoja}» no tiene columnas de datos.")
+            continue
+
+        sin_lote = []
+        for ident, valores in tabla.items():
+            lote = por_ident.get(ident.lower())
+            if lote is None:
+                sin_lote.append(ident)
+                continue
+            limpio = {}
+            for col, valor in valores.items():
+                v = _num(valor)
+                if v is not None:
+                    limpio[col] = v
+            lote["bloques"][clave] = limpio
+
+        if sin_lote:
+            advertencias.append(
+                f"Hoja «{nombre_hoja}»: {len(sin_lote)} identificación(es) no existen "
+                f"en la hoja identificacion y se omitieron: "
+                f"{', '.join(sin_lote[:4])}" + ("…" if len(sin_lote) > 4 else ""))
+
+        faltantes = [l["identificacion"] for l in lotes
+                     if clave not in l["bloques"]]
+        if faltantes:
+            advertencias.append(
+                f"Hoja «{nombre_hoja}»: {len(faltantes)} lote(s) sin datos: "
+                f"{', '.join(faltantes[:4])}" + ("…" if len(faltantes) > 4 else ""))
+
+    return {"lotes": lotes, "columnas": columnas,
+            "hojas_leidas": hojas_leidas}, advertencias
 
 
 # ============================================================
 #  Generación del formato en blanco
 # ============================================================
 
-def generar_formato() -> bytes:
-    """
-    Genera el Excel de formato: misma estructura A–ED que el archivo
-    del agrónomo, con las tres filas de encabezado y sin datos.
+VERDE = "16412B"
+VERDE2 = "2F7D4F"
+CREMA = "EAE5D9"
 
-    El usuario copia y pega sus valores aquí, y así no hay diferencias
-    de estructura entre archivos.
-    """
-    wb = Workbook()
-    ws = wb.active
-    ws.title = HOJA_DATOS
 
-    # --- Fila 1: títulos de bloque ---
-    titulos = {
-        23:  "CÁLCULOS SECUNDARIOS",
-        36:  "ÍNDICE DE BALANCE",
-        47:  "DIFERENCIA DE CONCENTRACIÓN CON EL NIVEL ÓPTIMO",
-        58:  "REQUERIMIENTO PARA NIVELACIÓN FOLIAR",
-        66:  "REQUERIMIENTO POR EXTRACCIÓN EN COSECHA ESPERADA",
-        74:  "REQUERIMIENTO TOTAL PARA EL RENDIMIENTO ESPERADO",
-        82:  "EQUIVALENTE EN ÓXIDO",
-        89:  "MÉTODO 1 · FERTILIZANTES SIMPLES (kg/palma)",
-        103: "MÉTODO 1 · KG POR LOTE",
-        111: "MÉTODO 2 · GRADO COMPUESTO Y COMPLEMENTOS",
-        127: "TONELADAS POR LOTE",
-    }
-    fila1 = [None] * (COL.ULTIMA_COLUMNA + 1)
-    for i, t in titulos.items():
-        fila1[i] = t
-    ws.append(fila1)
-
-    # --- Fila 2: encabezado de cada columna ---
-    encabezados = {
-        0: "Código", 1: "Zona", 2: "Rangos Edad", 3: "Identificación",
-        4: "UMA", 5: "Material de Siembra", 6: "siembra", 7: "Palmas",
-        8: "Número de la hoja muestreada", 9: "M.S.T", 10: "TONS",
-        11: "Nitrógeno", 12: "Fósforo", 13: "Potasio", 14: "Calcio",
-        15: "Magnesio", 16: "Cloruros", 17: "Azufre", 18: "Boro",
-        19: "Hierro", 20: "Cobre", 21: "Manganeso", 22: "Zinc",
-        23: "Ca+Mg+K", 24: "Sat.K", 25: "Sat.Ca", 26: "Sat.Mg",
-        27: "Ca/Mg", 28: "Ca/K", 29: "Mg/K", 30: "(Ca+Mg)/K",
-        31: "N/K", 32: "N/P", 33: "K/P", 34: "Ca/B", 35: "Fe/Mn",
-        89: "DAP", 91: "Nca", 93: "KCL", 94: "KIESERITA",
-        96: "Sulfato doble Potasio y Magnesio", 98: "AZUFRE",
-        99: "BORATO", 100: "ZINC",
-        103: "DAP", 104: "Nca", 105: "KCL", 106: "KIESERITA",
-        107: "Sulfato KMg", 108: "AZUFRE", 109: "BORATO",
-        110: "SULFATO DE ZINC",
-        112: "N", 113: "P", 114: "K", 115: "Mg", 116: "B",
-        117: "Nca", 119: "Rafos", 122: "PathenKali / Sulfato K Mg",
-        124: "Kieser", 125: "Boro",
-    }
-    nut = ["N", "P", "K", "Ca", "Mg", "S", "B", "Cu", "Fe", "Mn", "Zn"]
-    for j, n in enumerate(nut):
-        encabezados[36 + j] = n
-    fila2 = [None] * (COL.ULTIMA_COLUMNA + 1)
-    for i, t in encabezados.items():
-        fila2[i] = t
-    ws.append(fila2)
-
-    # --- Fila 3: unidades y referencias ---
-    unidades = {}
-    for i in range(11, 18):
-        unidades[i] = "%"
-    for i in range(18, 23):
-        unidades[i] = "mg/kg"
-    dif = ["N (%)", "P (%)", "K (%)", "Ca (%)", "Mg (%)", "S (%)",
-           "B (ppm)", "Cu (ppm)", "Fe (ppm)", "Mn (ppm)", "Zn (ppm)"]
-    for j, t in enumerate(dif):
-        unidades[47 + j] = t
-    req8 = ["N", "P", "K", "Ca", "Mg", "S", "B", "Zn"]
-    for base in (58, 66, 74):
-        for j, t in enumerate(req8):
-            unidades[base + j] = t
-    for j, t in enumerate(["N", "P2O5", "K2O", "CaO", "MgO", "S", "B2O3"]):
-        unidades[82 + j] = t
-    for j, t in enumerate(["Grado 13-5-27-5(Mg)", "NCa", "Rafos", "KSOMgO",
-                           "KIESE", "Borax 48%", "ZnSO4"]):
-        unidades[127 + j] = t
-    for i in range(103, 111):
-        unidades[i] = "Kg/ lote"
-    fila3 = [None] * (COL.ULTIMA_COLUMNA + 1)
-    for i, t in unidades.items():
-        fila3[i] = t
-    ws.append(fila3)
-
-    # --- Estilo ---
-    verde = PatternFill("solid", fgColor="16412B")
-    verde2 = PatternFill("solid", fgColor="2F7D4F")
-    crema = PatternFill("solid", fgColor="EAE5D9")
-
+def _estilo_cabecera(ws, ncols: int, anchos=None):
+    relleno = PatternFill("solid", fgColor=VERDE)
     for celda in ws[1]:
-        if celda.value:
-            celda.font = Font(bold=True, color="FFFFFF", size=10)
-            celda.fill = verde
-            celda.alignment = Alignment(horizontal="center", vertical="center")
-    for celda in ws[2]:
         celda.font = Font(bold=True, color="FFFFFF", size=10)
-        celda.fill = verde2
-        celda.alignment = Alignment(horizontal="center", wrap_text=True,
-                                    vertical="center")
-    for celda in ws[3]:
-        celda.font = Font(italic=True, size=9)
-        celda.fill = crema
-        celda.alignment = Alignment(horizontal="center")
-
-    ws.row_dimensions[1].height = 30
-    ws.row_dimensions[2].height = 44
-    for i in range(COL.ULTIMA_COLUMNA + 1):
+        celda.fill = relleno
+        celda.alignment = Alignment(horizontal="center", vertical="center",
+                                    wrap_text=True)
+    ws.row_dimensions[1].height = 32
+    for i in range(ncols):
         letra = get_column_letter(i + 1)
-        ws.column_dimensions[letra].width = 26 if i == 3 else (
-            18 if i in (0, 1, 2, 5) else 12)
+        ws.column_dimensions[letra].width = (anchos or {}).get(i, 30 if i == 0 else 13)
+    ws.freeze_panes = "B2"
 
-    ws.freeze_panes = "E4"
 
-    # --- Hoja de instrucciones ---
-    guia = wb.create_sheet("INSTRUCCIONES")
-    texto = [
-        ["PalmaData · Formato de carga · Módulo Fertilización"],
-        [],
-        ["Cómo usar este archivo"],
-        ["1. Abre tu Excel de análisis foliar del año."],
-        ["2. Copia el rango de datos completo (desde la fila 4 hacia abajo,"],
-        ["   columnas A hasta ED)."],
-        ["3. Pégalo aquí en la hoja RESULTADOS, empezando en la celda A4."],
-        ["   Usa Pegado especial → Valores, para que no viajen las fórmulas."],
-        ["4. Guarda y súbelo desde el módulo Fertilización de PalmaData."],
-        [],
-        ["Reglas"],
-        ["· La columna D (Identificación) es obligatoria: es la que identifica al lote."],
-        ["· No cambies el orden ni el número de columnas."],
-        ["· Las filas de totales al pie no se cargan: el sistema los recalcula."],
-        ["· Si vuelves a cargar el mismo año, los lotes se actualizan (no se duplican)."],
-        [],
-        ["Qué calcula PalmaData"],
-        ["El sistema NO recalcula tus fórmulas agronómicas: las guarda tal cual."],
-        ["Solo calcula los totales por zona y edad, los costos (toneladas × precio)"],
-        ["y los indicadores de las gráficas."],
-        [],
-        ["Los precios se ingresan desde la pestaña Parámetros de la web,"],
-        ["y quedan guardados por año."],
+def generar_formato(identificaciones: list[str] | None = None,
+                    fertilizantes: list[str] | None = None) -> bytes:
+    """
+    Genera el Excel de formato con sus cuatro hojas más instrucciones.
+
+    Si se pasan `identificaciones` (por ejemplo, las de la campaña anterior),
+    se precargan en la columna A de todas las hojas, así el usuario solo
+    pega los valores.
+    """
+    idents = identificaciones or []
+    ferts = fertilizantes or ["Grado 13-5-27-5(Mg)", "NCa", "Rafos",
+                              "KSOMgO", "KIESE", "Borax 48%", "ZnSO4"]
+
+    wb = Workbook()
+
+    # ---------- INSTRUCCIONES ----------
+    guia = wb.active
+    guia.title = F.HOJA_INSTRUCCIONES
+    lineas = [
+        ("PalmaData · Formato de carga · Módulo Fertilización", "titulo"),
+        ("", ""),
+        ("Regla general para TODAS las hojas", "sub"),
+        ("· Fila 1: los nombres de las columnas.", ""),
+        ("· Columna A: la identificación del lote. Es la llave que une las hojas.", ""),
+        ("· De la columna B en adelante: los valores.", ""),
+        ("· La identificación debe escribirse IGUAL en todas las hojas.", ""),
+        ("", ""),
+        ("Hoja  identificacion", "sub"),
+        ("Quién es cada lote. Columnas reconocidas:", ""),
+        ("   identificacion · uma · sector · zona · rango_edad · palmas ·", ""),
+        ("   hectareas · material · siembra · codigo · hoja · mst · tons", ""),
+        ("Cualquier columna adicional se guarda igual y queda disponible.", ""),
+        ("La columna hectareas es opcional: si la llenas, el sistema calcula", ""),
+        ("el costo por hectárea por zona y por sector.", ""),
+        ("", ""),
+        ("Hoja  anal_foliar", "sub"),
+        ("Resultado del laboratorio. Una columna por nutriente (N, P, K, ...).", ""),
+        ("Alimenta la pantalla de Diagnóstico.", ""),
+        ("", ""),
+        ("Hoja  ind_balan", "sub"),
+        ("Índice de balance: porcentaje sobre el nivel óptimo.", ""),
+        ("Una columna por nutriente. Alimenta el semáforo y el estado nutricional.", ""),
+        ("", ""),
+        ("Hoja  reque_fert", "sub"),
+        ("Fertilizantes requeridos y su cantidad por lote.", ""),
+        ("Una columna por fertilizante, con el nombre del producto en la fila 1.", ""),
+        ("Puedes agregar, quitar o cambiar fertilizantes entre campañas:", ""),
+        ("el sistema los detecta solos y los precios aparecen en Parámetros.", ""),
+        ("", ""),
+        ("Cómo cargar", "sub"),
+        ("1. Copia tus datos y pégalos aquí con Pegado especial → Valores.", ""),
+        ("2. No cambies los nombres de las hojas.", ""),
+        ("3. Sube el archivo desde Fertilización → Cargar datos, eligiendo el año.", ""),
+        ("4. Si vuelves a cargar el mismo año, los lotes se actualizan.", ""),
+        ("", ""),
+        ("Qué calcula PalmaData", "sub"),
+        ("El sistema NO recalcula la agronomía: guarda tus valores tal cual.", ""),
+        ("Calcula los totales por zona, sector y edad, los costos", ""),
+        ("(cantidad × precio), el costo por palma y por hectárea, y las gráficas.", ""),
+        ("Los precios se ingresan en la pestaña Parámetros, por campaña.", ""),
     ]
-    for linea in texto:
-        guia.append(linea)
-    guia["A1"].font = Font(bold=True, size=14, color="16412B")
-    for fila in (3, 11, 17):
-        guia.cell(row=fila, column=1).font = Font(bold=True, size=11)
-    guia.column_dimensions["A"].width = 78
+    for texto, tipo in lineas:
+        guia.append([texto])
+        celda = guia.cell(row=guia.max_row, column=1)
+        if tipo == "titulo":
+            celda.font = Font(bold=True, size=14, color=VERDE)
+        elif tipo == "sub":
+            celda.font = Font(bold=True, size=11, color=VERDE2)
+    guia.column_dimensions["A"].width = 86
+
+    # ---------- identificacion ----------
+    ws = wb.create_sheet(F.HOJA_IDENTIFICACION)
+    cols_ident = ["identificacion", "uma", "sector", "zona", "rango_edad",
+                  "palmas", "hectareas", "material", "siembra",
+                  "codigo", "hoja", "mst", "tons"]
+    ws.append(cols_ident)
+    for ident in idents:
+        ws.append([ident])
+    _estilo_cabecera(ws, len(cols_ident), {0: 34, 7: 24})
+
+    # ---------- anal_foliar ----------
+    ws = wb.create_sheet(F.HOJA_FOLIAR)
+    ws.append(["identificacion"] + F.ORDEN_NUTRIENTES)
+    for ident in idents:
+        ws.append([ident])
+    _estilo_cabecera(ws, len(F.ORDEN_NUTRIENTES) + 1, {0: 34})
+
+    # ---------- ind_balan ----------
+    ws = wb.create_sheet(F.HOJA_BALANCE)
+    nut_bal = [n for n in F.ORDEN_NUTRIENTES if n != "Cl"]
+    ws.append(["identificacion"] + nut_bal)
+    for ident in idents:
+        ws.append([ident])
+    _estilo_cabecera(ws, len(nut_bal) + 1, {0: 34})
+
+    # ---------- reque_fert ----------
+    ws = wb.create_sheet(F.HOJA_REQUERIMIENTO)
+    ws.append(["identificacion"] + ferts)
+    for ident in idents:
+        ws.append([ident])
+    _estilo_cabecera(ws, len(ferts) + 1, {0: 34})
+    for i in range(len(ferts)):
+        ws.column_dimensions[get_column_letter(i + 2)].width = 20
 
     buf = BytesIO()
     wb.save(buf)

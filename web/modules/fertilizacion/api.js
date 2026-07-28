@@ -1,6 +1,5 @@
 // ============================================================
 // PalmaData · Fertilización · Capa de API
-// Único punto de contacto con el backend.
 // ============================================================
 const BASE = '/api/fertilizacion';
 
@@ -21,6 +20,14 @@ const json = (metodo, cuerpo) => ({
   body: JSON.stringify(cuerpo),
 });
 
+const filtros = (anio, { zona, sector, rangoEdad } = {}) => {
+  const q = new URLSearchParams({ anio });
+  if (zona && zona !== 'Todas') q.append('zona', zona);
+  if (sector && sector !== 'Todos') q.append('sector', sector);
+  if (rangoEdad && rangoEdad !== 'Todas') q.append('rango_edad', rangoEdad);
+  return q;
+};
+
 export const API = {
   // Campañas
   campanas: () => pedir(`${BASE}/campanas`),
@@ -32,12 +39,11 @@ export const API = {
 
   // Parámetros
   parametros: (anio) => pedir(`${BASE}/parametros/${anio}`),
-  parametrosDefault: () => pedir(`${BASE}/parametros/default`),
   guardarParametros: (anio, params) =>
     pedir(`${BASE}/parametros/${anio}`, json('PUT', params)),
 
   // Carga
-  urlFormato: () => `${BASE}/formato`,
+  urlFormato: (desde) => `${BASE}/formato${desde ? `?desde=${desde}` : ''}`,
   cargar: (anio, archivo, reemplazar = false) => {
     const fd = new FormData();
     fd.append('anio', anio);
@@ -47,12 +53,8 @@ export const API = {
   },
 
   // Datos
-  lotes: (anio, { zona, rangoEdad } = {}) => {
-    const q = new URLSearchParams({ anio });
-    if (zona && zona !== 'Todas') q.append('zona', zona);
-    if (rangoEdad && rangoEdad !== 'Todas') q.append('rango_edad', rangoEdad);
-    return pedir(`${BASE}/lotes?${q}`);
-  },
+  lotes: (anio, f = {}) => pedir(`${BASE}/lotes?${filtros(anio, f)}`),
+  diagnostico: (anio, f = {}) => pedir(`${BASE}/diagnostico?${filtros(anio, f)}`),
   lote: (id, anio) => pedir(`${BASE}/lotes/${id}?anio=${anio}`),
   borrarLote: (id) => pedir(`${BASE}/lotes/${id}`, { method: 'DELETE' }),
 

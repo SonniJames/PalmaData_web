@@ -132,3 +132,23 @@ table.ft tfoot td{padding:9px 8px;font-weight:700;background:var(--cream-2);
 .barrow .bv{font-size:12.5px;font-weight:600;color:var(--ink);text-align:right;
   font-variant-numeric:tabular-nums}
 @media (max-width:520px){.barrow{grid-template-columns:82px 1fr 70px;gap:7px}}
+
+/* Barras horizontales */
+.bars{display:flex;flex-direction:column;gap:9px}
+.barrow{display:grid;grid-template-columns:130px 1fr 92px;gap:11px;align-items:center}
+.barrow .bl{font-size:12.5px;color:var(--ink-soft);text-align:right;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.barrow .btrack{background:var(--cream-2);border-radius:4px;height:18px;overflow:hidden}
+.barrow .bfill{height:100%;border-radius:4px;transition:width .35s ease}
+.barrow .bv{font-size:12.5px;font-weight:600;color:var(--ink);text-align:right;
+  font-variant-numeric:tabular-nums}
+
+/* Promedios del diagnóstico */
+.proms{display:grid;grid-template-columns:repeat(auto-fit,minmax(86px,1fr));gap:11px}
+.prom{background:var(--cream);border:1px solid var(--line);border-radius:var(--radius-sm);
+  padding:11px 8px;text-align:center}
+.prom .pn{font-family:var(--font-display);font-weight:700;font-size:13px;color:var(--forest);
+  margin-bottom:4px}
+.prom .pv{font-size:14px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
+
+@media (max-width:520px){.barrow{grid-template-columns:88px 1fr 72px;gap:7px}}

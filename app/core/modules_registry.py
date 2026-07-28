@@ -30,11 +30,12 @@ MODULOS = [
         "icono": "leaf",
         "activo": True,
         "submodulos": [
-            {"id": "resumen",    "nombre": "Resumen"},
-            {"id": "lotes",      "nombre": "Lotes"},
-            {"id": "plan",       "nombre": "Plan y costos"},
-            {"id": "parametros", "nombre": "Parámetros"},
-            {"id": "datos",      "nombre": "Cargar datos"},
+            {"id": "resumen",     "nombre": "Resumen"},
+            {"id": "diagnostico", "nombre": "Diagnóstico"},
+            {"id": "balance",     "nombre": "Índice de balance"},
+            {"id": "plan",        "nombre": "Plan y costos"},
+            {"id": "parametros",  "nombre": "Parámetros"},
+            {"id": "datos",       "nombre": "Cargar datos"},
         ],
     },
     # --- Futuros módulos (desactivados hasta que se construyan) ---
