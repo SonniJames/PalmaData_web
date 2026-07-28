@@ -32,19 +32,32 @@ DEF_PARAMS: dict = {
     # (permite costo por hectárea por zona y por sector). Este valor
     # global es el respaldo cuando la columna no viene.
     "hectareas": 0,
+
+    # Flete POR FERTILIZANTE · COP por tonelada transportada.
+    # Mismas claves que `precios`: un valor por producto. Si el flete es
+    # igual para todos, se pone el mismo número en cada uno (el formulario
+    # tiene un botón para copiarlo). Si mañana un producto viene de otro
+    # proveedor, se le pone su propia tarifa sin tocar los demás.
+    #   {"Grado 13-5-27-5(Mg)": 180000, "Borax 48%": 240000, ...}
+    "fletes": {},
+
+    # Respaldo: se usa para los productos que no tengan flete propio.
+    "flete_por_ton": 0,
 }
 
 ETIQUETAS = {
     "precios":   "Precios de fertilizantes (COP)",
+    "fletes":    "Flete por fertilizante (COP por tonelada)",
     "bands":     "Umbrales del semáforo (% sobre el óptimo)",
     "generales": "Datos de la plantación",
 }
 
 CAMPOS = {
-    "deficiente": "Deficiente por debajo de",
-    "bajo":       "Bajo por debajo de",
-    "optimo":     "Óptimo hasta",
-    "hectareas":  "Hectáreas totales",
+    "deficiente":    "Deficiente por debajo de",
+    "bajo":          "Bajo por debajo de",
+    "optimo":        "Óptimo hasta",
+    "hectareas":     "Hectáreas totales",
+    "flete_por_ton": "Flete (COP por tonelada)",
 }
 
 
@@ -65,11 +78,26 @@ def merge_params(base: dict, override: dict) -> dict:
 
 def asegurar_precios(params: dict, fertilizantes: list[str]) -> dict:
     """
-    Garantiza que todos los fertilizantes de la campaña tengan una
-    entrada de precio (en 0 si es nueva), para que aparezcan en la web.
+    Garantiza que todos los fertilizantes de la campaña tengan entrada
+    de precio y de flete (en 0 si son nuevas), para que aparezcan en la web.
     """
     p = copy.deepcopy(params)
     p.setdefault("precios", {})
+    p.setdefault("fletes", {})
+    respaldo = p.get("flete_por_ton") or 0
     for f in fertilizantes:
         p["precios"].setdefault(f, 0)
+        p["fletes"].setdefault(f, respaldo)
     return p
+
+
+def flete_de(params: dict, producto: str) -> float:
+    """Flete del producto; si no tiene propio, el respaldo general."""
+    fletes = params.get("fletes") or {}
+    valor = fletes.get(producto)
+    if valor in (None, ""):
+        valor = params.get("flete_por_ton") or 0
+    try:
+        return float(valor)
+    except (TypeError, ValueError):
+        return 0.0

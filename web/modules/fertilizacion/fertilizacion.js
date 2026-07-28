@@ -149,7 +149,11 @@ async function vistaResumen(c) {
       <div class="kpi"><div class="l">Lotes</div><div class="v">${n0(t.lotes)}</div></div>
       <div class="kpi"><div class="l">Palmas</div><div class="v">${n0(t.palmas)}</div></div>
       <div class="kpi"><div class="l">Fertilizante</div><div class="v">${n2(t.cantidad, 1)}</div><div class="s">toneladas</div></div>
-      <div class="kpi acc"><div class="l">Costo estimado</div><div class="v">${copM(t.costo_total)}</div><div class="s">COP · ${S.anio}</div></div>
+      <div class="kpi acc"><div class="l">Costo total</div><div class="v">${copM(t.costo_total)}</div>
+        <div class="s">flete incluido · ${S.anio}</div></div>
+      ${t.costo_flete ? `<div class="kpi"><div class="l">Del cual, flete</div>
+        <div class="v">${copM(t.costo_flete)}</div>
+        <div class="s">${n2(t.costo_flete / t.costo_total * 100, 1)}% · ${cop(t.flete_promedio)}/t prom.</div></div>` : ''}
       <div class="kpi"><div class="l">Costo por palma</div><div class="v">${cop(t.costo_por_palma)}</div></div>
       ${t.costo_por_hectarea ? `<div class="kpi"><div class="l">Costo por hectárea</div>
         <div class="v">${cop(t.costo_por_hectarea)}</div>
@@ -159,13 +163,41 @@ async function vistaResumen(c) {
     <div class="grid2">
       <div class="card">
         <h3>Fertilizante por producto</h3>
-        <p class="sub">Cantidad total del plan de ${S.anio}.</p>
-        ${barras(d.productos.map(p => ({ etiqueta: p.nombre, valor: p.cantidad })), ' t')}
+        <p class="sub">Cantidad y costo puesto en finca (precio + flete).</p>
+        <div class="twrap" style="max-height:none">
+          <table class="ft">
+            <thead><tr><th>Producto</th><th class="num">Ton</th>
+              <th class="num">Precio/t</th><th class="num">Flete/t</th>
+              <th class="num">Fertilizante</th><th class="num">Flete</th>
+              <th class="num">Total</th></tr></thead>
+            <tbody>${d.productos.map(p => `<tr>
+              <td class="ln">${esc(p.nombre)}</td>
+              <td class="num">${n2(p.cantidad, 1)}</td>
+              <td class="num">${cop(p.precio)}</td>
+              <td class="num">${cop(p.flete)}</td>
+              <td class="num">${copM(p.costo_fertilizante)}</td>
+              <td class="num">${copM(p.costo_flete)}</td>
+              <td class="num">${copM(p.costo)}</td></tr>`).join('')}</tbody>
+          </table>
+        </div>
       </div>
       <div class="card">
         <h3>Costo por sector</h3>
-        <p class="sub">Distribución del presupuesto por finca.</p>
+        <p class="sub">Distribución del presupuesto por finca, con flete incluido.</p>
         ${barras((d.por_sector || []).map(g => ({ etiqueta: g.grupo, valor: g.costo_total })), '', copM)}
+        <div class="twrap" style="max-height:none;margin-top:14px">
+          <table class="ft">
+            <thead><tr><th>Sector</th><th class="num">Ton</th>
+              <th class="num">Fertilizante</th><th class="num">Flete</th>
+              <th class="num">Total</th></tr></thead>
+            <tbody>${(d.por_sector || []).map(g => `<tr>
+              <td class="ln">${esc(g.grupo)}</td>
+              <td class="num">${n2(g.cantidad, 1)}</td>
+              <td class="num">${copM(g.costo_fertilizante)}</td>
+              <td class="num">${copM(g.costo_flete)}</td>
+              <td class="num">${copM(g.costo_total)}</td></tr>`).join('')}</tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -363,10 +395,12 @@ function vistaPlan(c) {
   }
 
   const tot = {}; ferts.forEach(f => tot[f] = 0);
-  let costo = 0, cant = 0, ha = 0;
+  let costo = 0, cant = 0, ha = 0, fert = 0, flete = 0;
   S.lotes.forEach(l => {
     ferts.forEach(f => tot[f] += +(l.requerimiento?.[f] || 0));
     costo += l.costos.costo_total;
+    fert += l.costos.costo_fertilizante || 0;
+    flete += l.costos.costo_flete || 0;
     cant += l.costos.cantidad;
     ha += +(l.hectareas || 0);
   });
@@ -376,8 +410,10 @@ function vistaPlan(c) {
   c.innerHTML = `
     <div class="kpis">
       <div class="kpi"><div class="l">Fertilizante</div><div class="v">${n2(cant, 1)}</div><div class="s">toneladas</div></div>
-      <div class="kpi acc"><div class="l">Costo</div><div class="v">${copM(costo)}</div>
-        <div class="s">${S.sector !== 'Todos' ? esc(S.sector) : (S.zona !== 'Todas' ? esc(S.zona) : 'toda la plantación')}</div></div>
+      <div class="kpi acc"><div class="l">Costo total</div><div class="v">${copM(costo)}</div>
+        <div class="s">flete incluido · ${S.sector !== 'Todos' ? esc(S.sector) : (S.zona !== 'Todas' ? esc(S.zona) : 'toda la plantación')}</div></div>
+      ${flete ? `<div class="kpi"><div class="l">Del cual, flete</div><div class="v">${copM(flete)}</div>
+        <div class="s">${n2(flete / costo * 100, 1)}%</div></div>` : ''}
       <div class="kpi"><div class="l">${esc(principal)}</div><div class="v">${n2(tot[principal], 1)}</div><div class="s">toneladas</div></div>
       <div class="kpi"><div class="l">Costo por palma</div><div class="v">${cop(palmas ? costo / palmas : null)}</div></div>
       ${ha ? `<div class="kpi"><div class="l">Costo por hectárea</div>
@@ -387,17 +423,22 @@ function vistaPlan(c) {
       <table class="ft">
         <thead><tr><th>Lote</th><th>Sector</th><th>Zona</th><th class="num">Palmas</th>
           ${ferts.map(f => `<th class="num">${esc(f)}</th>`).join('')}
-          <th class="num">Costo</th></tr></thead>
+          <th class="num">Fertilizante</th><th class="num">Flete</th>
+          <th class="num">Costo total</th></tr></thead>
         <tbody>${S.lotes.map(l => `<tr>
           <td class="ln">${esc(l.identificacion)}</td>
           <td>${esc(l.sector ?? '—')}</td>
           <td>${esc(l.zona ?? '—')}</td>
           <td class="num">${n0(l.palmas)}</td>
           ${ferts.map(f => `<td class="num">${n2(l.requerimiento?.[f])}</td>`).join('')}
+          <td class="num">${cop(l.costos.costo_fertilizante)}</td>
+          <td class="num">${cop(l.costos.costo_flete)}</td>
           <td class="num">${cop(l.costos.costo_total)}</td>
         </tr>`).join('')}</tbody>
         <tfoot><tr><td colspan="4">Total</td>
           ${ferts.map(f => `<td class="num">${n2(tot[f])}</td>`).join('')}
+          <td class="num">${cop(fert)}</td>
+          <td class="num">${cop(flete)}</td>
           <td class="num">${cop(costo)}</td></tr></tfoot>
       </table>
     </div>`;
@@ -425,22 +466,42 @@ async function vistaParams(c) {
         <span>Precios de fertilizantes · campaña ${S.anio}</span><span class="ar">▸</span></button>
       <div class="pbody open" data-b="precios">
         ${ferts.map(f => `<div class="pf">
-          <label for="pr_${esc(f)}">${esc(f)}</label>
+          <label>${esc(f)}</label>
           <input type="number" step="any" data-precio="${esc(f)}"
                  value="${S.params.precios?.[f] ?? 0}">
         </div>`).join('')}
       </div>
+    </div>
+
+    <div class="pgrp">
+      <button class="phead open" data-t="fletes">
+        <span>Flete por fertilizante (COP por tonelada)</span><span class="ar">▸</span></button>
+      <div class="pbody open" data-b="fletes">
+        ${ferts.map(f => `<div class="pf">
+          <label>${esc(f)}</label>
+          <input type="number" step="any" data-flete="${esc(f)}"
+                 value="${S.params.fletes?.[f] ?? 0}">
+        </div>`).join('')}
+      </div>
+      <div style="padding:0 18px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <input type="number" step="any" id="fTodos" placeholder="Valor para todos"
+               style="padding:8px 10px;border:1.5px solid var(--line);
+                      border-radius:var(--radius-sm);font-size:13.5px;width:170px">
+        <button class="btn btn-ghost" id="fAplicar">Aplicar a todos</button>
+        <span style="font-size:12.5px;color:var(--ink-soft)">
+          Si el flete es igual para todos los productos, escríbelo aquí y aplícalo.</span>
+      </div>
     </div>`
     : `<div class="msg msg-warn">Aún no hay fertilizantes cargados para ${S.anio}.
-        Sube el Excel y aquí aparecerán sus productos para ponerles precio.</div>`;
+        Sube el Excel y aquí aparecerán sus productos para ponerles precio y flete.</div>`;
 
   c.innerHTML = `
     <div class="card">
       <h3>Parámetros de la campaña ${S.anio}</h3>
       <p class="sub">El sistema no recalcula la agronomía del Excel. Aquí se ajusta lo que
-        el archivo no trae: los precios de los fertilizantes de esta campaña, los umbrales
-        de color y las hectáreas. Todo se guarda por año, así el histórico conserva los
-        valores que regían en cada campaña.</p>
+        el archivo no trae: los precios de los fertilizantes de esta campaña, el flete,
+        los umbrales de color y las hectáreas. Todo se guarda por año, así el histórico
+        conserva los valores que regían en cada campaña.</p>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         <button class="btn btn-primary" id="pG">Guardar</button>
       </div>
@@ -456,6 +517,7 @@ async function vistaParams(c) {
           <label for="p_ha">${esc(campos.hectareas || 'Hectáreas totales')}</label>
           <input type="number" step="any" id="p_ha" value="${S.params.hectareas ?? 0}">
         </div>
+
       </div>
     </div>
 
@@ -470,16 +532,27 @@ async function vistaParams(c) {
     </div>
 
     <div class="card">
-      <p class="sub" style="margin:0">Si la hoja <strong>identificacion</strong> del Excel trae
-        una columna <strong>hectareas</strong> por lote, el sistema usa esa y calcula el costo
-        por hectárea de cada zona y sector. El valor de arriba es el respaldo cuando la
+      <p class="sub" style="margin:0 0 10px">Si la hoja <strong>identificacion</strong> del Excel
+        trae una columna <strong>hectareas</strong> por lote, el sistema usa esa y calcula el
+        costo por hectárea de cada zona y sector. El valor de arriba es el respaldo cuando la
         columna no viene.</p>
+      <p class="sub" style="margin:0">Cada fertilizante tiene su propio <strong>flete</strong>,
+        por si vienen de proveedores distintos. El valor de un producto es
+        <em>cantidad × (precio + su flete)</em>, y queda incluido en todos los totales:
+        por lote, por zona, por sector y en el general de la plantación.</p>
     </div>`;
 
   c.querySelectorAll('.phead').forEach(h => h.onclick = () => {
     h.classList.toggle('open');
     c.querySelector(`[data-b="${h.dataset.t}"]`).classList.toggle('open');
   });
+
+  const btnAplicar = $('#fAplicar');
+  if (btnAplicar) btnAplicar.onclick = () => {
+    const v = parseFloat($('#fTodos').value);
+    if (isNaN(v)) return;
+    c.querySelectorAll('input[data-flete]').forEach(i => { i.value = v; });
+  };
 
   $('#pG').onclick = async () => {
     const nuevos = JSON.parse(JSON.stringify(S.params));
@@ -492,6 +565,11 @@ async function vistaParams(c) {
     c.querySelectorAll('input[data-band]').forEach(i => {
       const v = parseFloat(i.value);
       if (!isNaN(v)) nuevos.bands[i.dataset.band] = v;
+    });
+    nuevos.fletes = {};
+    c.querySelectorAll('input[data-flete]').forEach(i => {
+      const v = parseFloat(i.value);
+      nuevos.fletes[i.dataset.flete] = isNaN(v) ? 0 : v;
     });
     const ha = parseFloat($('#p_ha').value);
     nuevos.hectareas = isNaN(ha) ? 0 : ha;
@@ -510,8 +588,6 @@ async function vistaParams(c) {
 //  CARGAR DATOS
 // ============================================================
 function vistaCarga(c) {
-  const hoy = new Date().getFullYear();
-  const anios = []; for (let a = hoy + 1; a >= hoy - 6; a--) anios.push(a);
   const previa = S.campanas.length ? S.campanas[0].anio : null;
 
   c.innerHTML = `
@@ -522,7 +598,8 @@ function vistaCarga(c) {
 
       <div class="fbar" style="margin-bottom:16px">
         <div class="g"><label for="cA">Año</label>
-          <select id="cA">${anios.map(a => `<option ${a === S.anio ? 'selected' : ''}>${a}</option>`).join('')}</select></div>
+          <input type="number" id="cA" min="1990" max="2100" step="1"
+                 value="${S.anio}" style="width:110px"></div>
         <div class="g"><label style="display:flex;align-items:center;gap:7px;cursor:pointer">
           <input type="checkbox" id="cRe"> Reemplazar todo el año</label></div>
         <div class="sp"></div>
@@ -592,6 +669,10 @@ function vistaCarga(c) {
 
   btn.onclick = async () => {
     const anio = +$('#cA').value, m = $('#cM');
+    if (!anio || anio < 1990 || anio > 2100) {
+      m.innerHTML = `<div class="msg msg-err">Escribe un año válido (entre 1990 y 2100).</div>`;
+      return;
+    }
     btn.disabled = true; btn.textContent = 'Cargando…'; m.innerHTML = '';
     try {
       const r = await API.cargar(anio, archivo, $('#cRe').checked);

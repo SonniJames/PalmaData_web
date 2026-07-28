@@ -13,7 +13,8 @@ from . import repository as repo
 from .calc import comparar_campanas, consolidar, preparar_lote, resumen_nutricional
 from .excel_loader import generar_formato, leer_excel
 from .formato import HOJAS_DATOS, ordenar_nutrientes
-from .params import CAMPOS, ETIQUETAS, asegurar_precios, get_default_params
+from .params import (CAMPOS, ETIQUETAS, asegurar_precios, flete_de,
+                     get_default_params)
 
 router = APIRouter(prefix="/api/fertilizacion", tags=["fertilizacion"])
 
@@ -270,10 +271,17 @@ def get_dashboard(anio: int = Query(...), _=Depends(sesion)):
     por_edad = consolidar(lotes, "rango_edad", params, ferts)
 
     precios = params.get("precios", {})
-    productos = [{"nombre": f,
-                  "cantidad": por_zona["total"].get(f, 0),
-                  "costo": por_zona["total"].get(f, 0) * (precios.get(f) or 0)}
-                 for f in ferts]
+    productos = []
+    for f in ferts:
+        cant = por_zona["total"].get(f, 0)
+        precio = float(precios.get(f) or 0)
+        flete = flete_de(params, f)
+        productos.append({
+            "nombre": f, "cantidad": cant, "precio": precio, "flete": flete,
+            "costo_fertilizante": cant * precio,
+            "costo_flete": cant * flete,
+            "costo": cant * (precio + flete),
+        })
 
     top = sorted(lotes, key=lambda l: l["costos"]["costo_total"], reverse=True)[:10]
 

@@ -12,6 +12,7 @@ Aquí solo hay aritmética de gestión:
   · indicadores para las gráficas
 """
 from .formato import ordenar_nutrientes
+from .params import flete_de
 
 
 def num(v) -> float:
@@ -38,34 +39,55 @@ def semaforo(indice, bands: dict) -> str:
     return "excesivo"
 
 
-def costo_lote(requerimiento: dict, precios: dict) -> dict:
+def costo_lote(requerimiento: dict, params: dict) -> dict:
     """
-    Costo de un lote. `requerimiento` es {fertilizante: cantidad}
-    y `precios` es {fertilizante: COP por unidad}.
-    Funciona con cualquier conjunto de fertilizantes.
+    Costo de un lote, flete incluido.
+
+    Para cada fertilizante:
+        costo = cantidad × (precio + flete de ESE fertilizante)
+
+    Cada producto puede tener su propia tarifa de flete. El flete queda
+    dentro del costo del producto, así se arrastra a todos los totales:
+    por lote, por zona, por sector y general.
     """
-    detalle, total_cant, total_cop = {}, 0.0, 0.0
+    precios = params.get("precios") or {}
+
+    detalle = {}
+    total_cant = total_fert = total_flete = 0.0
+
     for producto, cantidad in (requerimiento or {}).items():
         c = num(cantidad)
-        costo = c * num((precios or {}).get(producto))
-        detalle[producto] = {"cantidad": c, "costo": costo}
+        precio = num(precios.get(producto))
+        flete_u = flete_de(params, producto)
+        costo_fert = c * precio
+        costo_flete = c * flete_u
+        detalle[producto] = {
+            "cantidad": c,
+            "precio": precio,
+            "flete": flete_u,
+            "costo_fertilizante": costo_fert,
+            "costo_flete": costo_flete,
+            "costo": costo_fert + costo_flete,   # valor del producto puesto en finca
+        }
         total_cant += c
-        total_cop += costo
+        total_fert += costo_fert
+        total_flete += costo_flete
 
     return {"detalle": detalle,
             "cantidad": round(total_cant, 3),
-            "costo_total": total_cop}
+            "costo_fertilizante": total_fert,
+            "costo_flete": total_flete,
+            "costo_total": total_fert + total_flete}
 
 
 def preparar_lote(fila: dict, params: dict) -> dict:
     """Añade al lote su semáforo y su costo."""
     lote = dict(fila)
     bands = params.get("bands", {})
-    precios = params.get("precios", {})
 
     balance = lote.get("balance") or {}
     lote["semaforo"] = {k: semaforo(v, bands) for k, v in balance.items()}
-    lote["costos"] = costo_lote(lote.get("requerimiento") or {}, precios)
+    lote["costos"] = costo_lote(lote.get("requerimiento") or {}, params)
 
     ha = num(lote.get("hectareas"))
     palmas = num(lote.get("palmas"))
@@ -90,7 +112,8 @@ def consolidar(lotes: list[dict], por: str, params: dict,
         clave = l.get(por) or "Sin dato"
         g = grupos.setdefault(clave, {
             "grupo": clave, "lotes": 0, "palmas": 0, "hectareas": 0.0,
-            "tons_fruto": 0.0, "cantidad": 0.0, "costo_total": 0.0,
+            "tons_fruto": 0.0, "cantidad": 0.0,
+            "costo_fertilizante": 0.0, "costo_flete": 0.0, "costo_total": 0.0,
             **{f: 0.0 for f in fertilizantes},
         })
         g["lotes"] += 1
@@ -98,6 +121,8 @@ def consolidar(lotes: list[dict], por: str, params: dict,
         g["hectareas"] += num(l.get("hectareas"))
         g["tons_fruto"] += num(l.get("tons"))
         g["cantidad"] += l["costos"]["cantidad"]
+        g["costo_fertilizante"] += l["costos"]["costo_fertilizante"]
+        g["costo_flete"] += l["costos"]["costo_flete"]
         g["costo_total"] += l["costos"]["costo_total"]
         for f in fertilizantes:
             g[f] += num((l.get("requerimiento") or {}).get(f))
@@ -117,8 +142,12 @@ def consolidar(lotes: list[dict], por: str, params: dict,
         "hectareas": round(sum(g["hectareas"] for g in lista), 2),
         "tons_fruto": round(sum(g["tons_fruto"] for g in lista), 2),
         "cantidad": round(sum(g["cantidad"] for g in lista), 2),
+        "costo_fertilizante": sum(g["costo_fertilizante"] for g in lista),
+        "costo_flete": sum(g["costo_flete"] for g in lista),
         "costo_total": sum(g["costo_total"] for g in lista),
     }
+    if total["cantidad"]:
+        total["flete_promedio"] = total["costo_flete"] / total["cantidad"]
     for f in fertilizantes:
         total[f] = round(sum(g[f] for g in lista), 2)
 
@@ -168,7 +197,8 @@ def comparar_campanas(datos_por_anio: dict[int, dict]) -> list[dict]:
     los que no existan en un año quedan en 0.
     """
     fijos = {"lotes", "palmas", "hectareas", "hectareas_usadas", "tons_fruto",
-             "cantidad", "costo_total", "costo_por_palma",
+             "cantidad", "costo_total", "costo_fertilizante", "costo_flete",
+             "flete_por_ton", "flete_promedio", "costo_por_palma",
              "costo_por_hectarea", "costo_por_ton_fruto"}
     productos = sorted({k for d in datos_por_anio.values()
                         for k in d["total"] if k not in fijos})
@@ -178,7 +208,10 @@ def comparar_campanas(datos_por_anio: dict[int, dict]) -> list[dict]:
         t = datos_por_anio[anio]["total"]
         fila = {"anio": anio, "lotes": t["lotes"], "palmas": t["palmas"],
                 "hectareas": t.get("hectareas", 0),
-                "cantidad": t["cantidad"], "costo_total": t["costo_total"],
+                "cantidad": t["cantidad"],
+                "costo_fertilizante": t.get("costo_fertilizante", 0),
+                "costo_flete": t.get("costo_flete", 0),
+                "costo_total": t["costo_total"],
                 "costo_por_palma": t.get("costo_por_palma", 0),
                 "costo_por_hectarea": t.get("costo_por_hectarea", 0)}
         for p in productos:
