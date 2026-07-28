@@ -355,13 +355,16 @@ function vistaBalance(c) {
   }
 
   const palmas = S.lotes.reduce((a, l) => a + (l.palmas || 0), 0);
-  const tons = S.lotes.reduce((a, l) => a + (+l.tons || 0), 0);
+  const conTons = S.lotes.filter(l => +l.tons > 0);
+  const tons = conTons.length
+    ? conTons.reduce((a, l) => a + (+l.tons || 0), 0) / conTons.length
+    : 0;
 
   c.innerHTML = `
     <div class="kpis">
       <div class="kpi"><div class="l">Lotes</div><div class="v">${n0(S.lotes.length)}</div></div>
       <div class="kpi"><div class="l">Palmas</div><div class="v">${n0(palmas)}</div></div>
-      <div class="kpi"><div class="l">Cosecha esperada</div><div class="v">${n0(tons)}</div><div class="s">toneladas</div></div>
+      <div class="kpi"><div class="l">Cosecha esperada</div><div class="v">${n2(tons, 1)}</div><div class="s">toneladas</div></div>
     </div>
     <div class="twrap">
       <table class="ft">
