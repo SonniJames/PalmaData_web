@@ -47,6 +47,10 @@ ALIAS_HOJAS = {
 #   encabezado normalizado -> campo de la tabla fert_lote
 # Cualquier columna que no esté aquí se guarda en `extra`.
 # ------------------------------------------------------------
+# Nota: `empresa` NO se guarda como campo del lote. La empresa se
+# elige al cargar y define la campaña. Si la columna viene en el Excel,
+# queda en `extra` y el cargador la usa para VALIDAR que el archivo
+# corresponda a la empresa seleccionada.
 CAMPOS_IDENTIFICACION = {
     "identificacion": "identificacion",
     "identificaciones": "identificacion",

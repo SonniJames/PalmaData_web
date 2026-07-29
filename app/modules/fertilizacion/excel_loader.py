@@ -266,7 +266,8 @@ def _estilo_cabecera(ws, ncols: int, anchos=None):
 
 
 def generar_formato(identificaciones: list[str] | None = None,
-                    fertilizantes: list[str] | None = None) -> bytes:
+                    fertilizantes: list[str] | None = None,
+                    empresa: str | None = None) -> bytes:
     """
     Genera el Excel de formato con sus cuatro hojas más instrucciones.
 
@@ -294,8 +295,11 @@ def generar_formato(identificaciones: list[str] | None = None,
         ("", ""),
         ("Hoja  identificacion", "sub"),
         ("Quién es cada lote. Columnas reconocidas:", ""),
-        ("   identificacion · uma · sector · zona · rango_edad · palmas ·", ""),
-        ("   hectareas · material · siembra · codigo · hoja · mst · tons", ""),
+        ("   identificacion · empresa · uma · sector · zona · rango_edad ·", ""),
+        ("   palmas · hectareas · material · siembra · codigo · hoja · mst · tons", ""),
+        ("La columna empresa es opcional pero recomendada: la empresa se elige", ""),
+        ("al cargar, y si el archivo la trae, el sistema verifica que coincida.", ""),
+        ("Así te avisa si estás subiendo el archivo equivocado.", ""),
         ("Cualquier columna adicional se guarda igual y queda disponible.", ""),
         ("La columna hectareas es opcional: si la llenas, el sistema calcula", ""),
         ("el costo por hectárea por zona y por sector.", ""),
@@ -317,8 +321,11 @@ def generar_formato(identificaciones: list[str] | None = None,
         ("Cómo cargar", "sub"),
         ("1. Copia tus datos y pégalos aquí con Pegado especial → Valores.", ""),
         ("2. No cambies los nombres de las hojas.", ""),
-        ("3. Sube el archivo desde Fertilización → Cargar datos, eligiendo el año.", ""),
-        ("4. Si vuelves a cargar el mismo año, los lotes se actualizan.", ""),
+        ("3. Sube el archivo desde Fertilización → Cargar datos, eligiendo", ""),
+        ("   la EMPRESA y el año.", ""),
+        ("4. Recargar la misma empresa y año reemplaza esos datos: si te", ""),
+        ("   equivocaste de archivo, sube el correcto y queda limpio.", ""),
+        ("   Los precios y fletes que ya hayas puesto NO se borran.", ""),
         ("", ""),
         ("Qué calcula PalmaData", "sub"),
         ("El sistema NO recalcula la agronomía: guarda tus valores tal cual.", ""),
@@ -337,13 +344,13 @@ def generar_formato(identificaciones: list[str] | None = None,
 
     # ---------- identificacion ----------
     ws = wb.create_sheet(F.HOJA_IDENTIFICACION)
-    cols_ident = ["identificacion", "uma", "sector", "zona", "rango_edad",
-                  "palmas", "hectareas", "material", "siembra",
+    cols_ident = ["identificacion", "empresa", "uma", "sector", "zona",
+                  "rango_edad", "palmas", "hectareas", "material", "siembra",
                   "codigo", "hoja", "mst", "tons"]
     ws.append(cols_ident)
     for ident in idents:
-        ws.append([ident])
-    _estilo_cabecera(ws, len(cols_ident), {0: 34, 7: 24})
+        ws.append([ident, empresa])
+    _estilo_cabecera(ws, len(cols_ident), {0: 34, 1: 22, 8: 24})
 
     # ---------- anal_foliar ----------
     ws = wb.create_sheet(F.HOJA_FOLIAR)

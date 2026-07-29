@@ -37,14 +37,37 @@ def _limpiar(v):
     return v
 
 
-def _cargar(anio: int, zona=None, sector=None, rango_edad=None):
+def _empresa(empresa_id: int | None) -> int:
+    """
+    Resuelve la empresa. Si no viene, usa la primera activa, para que
+    el módulo siga funcionando mientras el frontend no la envíe.
+    """
+    if empresa_id:
+        return int(empresa_id)
+    e = repo.empresa_por_defecto()
+    if not e:
+        raise HTTPException(400, "No hay empresas registradas. "
+                                 "Ejecuta deploy/06_fert_empresas.sql")
+    return e["id"]
+
+
+def _cargar(empresa_id: int, anio: int, zona=None, sector=None, rango_edad=None):
     """Devuelve (lotes preparados, params, fertilizantes)."""
-    filas = repo.listar_lotes(anio, zona, sector, rango_edad)
-    params = repo.parametros_o_default(anio)
+    filas = repo.listar_lotes(empresa_id, anio, zona, sector, rango_edad)
+    params = repo.parametros_o_default(empresa_id, anio)
     lotes = [preparar_lote({k: _limpiar(v) for k, v in f.items()}, params)
              for f in filas]
-    ferts = repo.fertilizantes_de_campana(anio)
+    ferts = repo.fertilizantes_de_campana(empresa_id, anio)
     return lotes, params, ferts
+
+
+# ============================================================
+#  EMPRESAS
+# ============================================================
+
+@router.get("/empresas")
+def get_empresas(_=Depends(sesion)):
+    return {"ok": True, "empresas": repo.listar_empresas()}
 
 
 # ============================================================
@@ -52,8 +75,9 @@ def _cargar(anio: int, zona=None, sector=None, rango_edad=None):
 # ============================================================
 
 @router.get("/campanas")
-def get_campanas(_=Depends(sesion)):
-    return {"ok": True, "campanas": repo.listar_campanas()}
+def get_campanas(empresa_id: int | None = Query(None), _=Depends(sesion)):
+    """Campañas. Sin empresa_id devuelve las de todas, con su empresa."""
+    return {"ok": True, "campanas": repo.listar_campanas(empresa_id)}
 
 
 @router.post("/campanas")
@@ -61,26 +85,29 @@ def post_campana(datos: dict = Body(...), usuario=Depends(sesion)):
     anio = datos.get("anio")
     if not anio:
         raise HTTPException(400, "Falta el año.")
-    if repo.campana_por_anio(int(anio)):
-        raise HTTPException(400, f"La campaña {anio} ya existe.")
+    eid = _empresa(datos.get("empresa_id"))
+    if repo.campana_por_anio(eid, int(anio)):
+        raise HTTPException(400, f"La campaña {anio} ya existe para esa empresa.")
     with db.get_cursor() as cur:
-        cid = repo.crear_campana(cur, int(anio), datos.get("nombre"),
+        cid = repo.crear_campana(cur, eid, int(anio), datos.get("nombre"),
                                  usuario=usuario["usuario"],
                                  copiar_de=datos.get("copiar_de"))
-    return {"ok": True, "id": cid, "anio": int(anio)}
+    return {"ok": True, "id": cid, "anio": int(anio), "empresa_id": eid}
 
 
 @router.delete("/campanas/{anio}")
-def delete_campana(anio: int, _=Depends(sesion)):
-    if not repo.eliminar_campana(anio):
-        raise HTTPException(404, f"No existe la campaña {anio}.")
+def delete_campana(anio: int, empresa_id: int | None = Query(None),
+                   _=Depends(sesion)):
+    if not repo.eliminar_campana(_empresa(empresa_id), anio):
+        raise HTTPException(404, f"No existe la campaña {anio} para esa empresa.")
     return {"ok": True}
 
 
 @router.put("/campanas/{anio}/estado")
 def put_estado(anio: int, datos: dict = Body(...), _=Depends(sesion)):
-    if not repo.cerrar_campana(anio, bool(datos.get("cerrada"))):
-        raise HTTPException(404, f"No existe la campaña {anio}.")
+    if not repo.cerrar_campana(_empresa(datos.get("empresa_id")), anio,
+                               bool(datos.get("cerrada"))):
+        raise HTTPException(404, f"No existe la campaña {anio} para esa empresa.")
     return {"ok": True}
 
 
@@ -89,26 +116,32 @@ def put_estado(anio: int, datos: dict = Body(...), _=Depends(sesion)):
 # ============================================================
 
 @router.get("/parametros/{anio}")
-def get_parametros(anio: int, _=Depends(sesion)):
+def get_parametros(anio: int, empresa_id: int | None = Query(None),
+                   _=Depends(sesion)):
     """
     Parámetros de la campaña. Los precios se completan con los
     fertilizantes que trajo el Excel de ESE año, así el formulario
     cambia según la campaña seleccionada.
     """
-    p = repo.obtener_parametros(anio)
+    eid = _empresa(empresa_id)
+    p = repo.obtener_parametros(eid, anio)
     if p is None:
-        raise HTTPException(404, f"No hay parámetros para {anio}.")
-    ferts = repo.fertilizantes_de_campana(anio)
+        raise HTTPException(404, f"No hay parámetros para {anio} en esa empresa.")
+    ferts = repo.fertilizantes_de_campana(eid, anio)
     p = asegurar_precios(p, ferts)
+    emp = repo.empresa_por_id(eid)
     return {"ok": True, "params": p, "fertilizantes": ferts,
+            "empresa_id": eid, "empresa": emp["nombre"] if emp else None,
             "etiquetas": ETIQUETAS, "campos": CAMPOS}
 
 
 @router.put("/parametros/{anio}")
-def put_parametros(anio: int, params: dict = Body(...), _=Depends(sesion)):
-    if not repo.guardar_parametros(anio, params):
-        raise HTTPException(404, f"No existe la campaña {anio}.")
-    return {"ok": True, "anio": anio}
+def put_parametros(anio: int, cuerpo: dict = Body(...), _=Depends(sesion)):
+    """Los parámetros son de una empresa y un año concretos."""
+    eid = _empresa(cuerpo.pop("empresa_id", None))
+    if not repo.guardar_parametros(eid, anio, cuerpo):
+        raise HTTPException(404, f"No existe la campaña {anio} para esa empresa.")
+    return {"ok": True, "anio": anio, "empresa_id": eid}
 
 
 @router.get("/parametros/default/valores")
@@ -124,12 +157,17 @@ def get_default(_=Depends(sesion)):
 @router.get("/formato")
 def get_formato(desde: int | None = Query(None,
                 description="Año del que precargar las identificaciones"),
+                empresa_id: int | None = Query(None),
                 _=Depends(sesion)):
     """Descarga el Excel de formato con sus cuatro hojas."""
-    idents = repo.identificaciones_de_campana(desde) if desde else None
-    ferts = repo.fertilizantes_de_campana(desde) if desde else None
+    eid = _empresa(empresa_id)
+    idents = repo.identificaciones_de_campana(eid, desde) if desde else None
+    ferts = repo.fertilizantes_de_campana(eid, desde) if desde else None
+    emp = repo.empresa_por_id(eid)
     return Response(
-        content=generar_formato(idents, ferts or None), media_type=XLSX,
+        content=generar_formato(idents, ferts or None,
+                                emp["nombre"] if emp else None),
+        media_type=XLSX,
         headers={"Content-Disposition":
                  'attachment; filename="formato_fertilizacion.xlsx"'})
 
@@ -137,12 +175,25 @@ def get_formato(desde: int | None = Query(None,
 @router.post("/carga")
 async def post_carga(
     anio: int = Form(...),
+    empresa_id: int = Form(...),
     archivo: UploadFile = File(...),
-    reemplazar: bool = Form(False),
+    reemplazar: bool = Form(True),
     usuario=Depends(sesion),
 ):
+    """
+    Carga el Excel de UNA empresa en UN año.
+
+    Por defecto reemplaza: borra los lotes de esa empresa+año y carga
+    los del archivo. Así, si te equivocaste de archivo, vuelves a subir
+    el correcto y no quedan lotes viejos mezclados. Los parámetros
+    (precios, fletes) NO se borran: viven en la campaña.
+    """
     if not archivo.filename.lower().endswith((".xlsx", ".xlsm")):
         raise HTTPException(400, "El archivo debe ser .xlsx")
+
+    empresa = repo.empresa_por_id(empresa_id)
+    if not empresa:
+        raise HTTPException(400, "Selecciona una empresa válida antes de cargar.")
 
     resultado, advertencias = leer_excel(await archivo.read())
     lotes = (resultado or {}).get("lotes") or []
@@ -150,10 +201,22 @@ async def post_carga(
         raise HTTPException(400, {"mensaje": "No se cargó nada.",
                                   "advertencias": advertencias})
 
+    # Si el Excel trae columna "empresa", se valida contra la seleccionada.
+    # Es la red de seguridad contra subir el archivo equivocado.
+    del_archivo = {(l.get("extra") or {}).get("empresa")
+                   for l in lotes if (l.get("extra") or {}).get("empresa")}
+    for nombre in del_archivo:
+        if str(nombre).strip().lower() != empresa["nombre"].strip().lower():
+            raise HTTPException(400, {
+                "mensaje": f"El archivo dice que es de «{nombre}» pero "
+                           f"seleccionaste «{empresa['nombre']}». "
+                           f"Revisa antes de cargar.",
+                "advertencias": advertencias})
+
     nuevos = actualizados = borrados = 0
     with db.get_cursor() as cur:
         campana_id = repo.obtener_o_crear_campana(
-            cur, anio, archivo.filename, usuario["usuario"])
+            cur, empresa_id, anio, archivo.filename, usuario["usuario"])
 
         if reemplazar:
             borrados = repo.borrar_lotes_de_campana(cur, campana_id)
@@ -177,6 +240,7 @@ async def post_carga(
                                         asegurar_precios(actuales, ferts))
 
     return {"ok": True, "anio": anio, "archivo": archivo.filename,
+            "empresa_id": empresa_id, "empresa": empresa["nombre"],
             "lotes_leidos": len(lotes), "nuevos": nuevos,
             "actualizados": actualizados, "borrados": borrados,
             "hojas": resultado.get("hojas_leidas", []),
@@ -189,23 +253,27 @@ async def post_carga(
 # ============================================================
 
 @router.get("/lotes")
-def get_lotes(anio: int = Query(...), zona: str | None = Query(None),
-              sector: str | None = Query(None),
+def get_lotes(anio: int = Query(...), empresa_id: int | None = Query(None),
+              zona: str | None = Query(None), sector: str | None = Query(None),
               rango_edad: str | None = Query(None), _=Depends(sesion)):
-    lotes, _p, ferts = _cargar(anio, zona, sector, rango_edad)
+    eid = _empresa(empresa_id)
+    lotes, _p, ferts = _cargar(eid, anio, zona, sector, rango_edad)
     nutrientes = ordenar_nutrientes(
         {k for l in lotes for k in (l.get("balance") or {})})
-    return {"ok": True, "anio": anio, "total": len(lotes), "lotes": lotes,
+    return {"ok": True, "anio": anio, "empresa_id": eid,
+            "total": len(lotes), "lotes": lotes,
             "fertilizantes": ferts, "nutrientes": nutrientes,
-            **repo.filtros_de_campana(anio)}
+            **repo.filtros_de_campana(eid, anio)}
 
 
 @router.get("/diagnostico")
-def get_diagnostico(anio: int = Query(...), zona: str | None = Query(None),
+def get_diagnostico(anio: int = Query(...), empresa_id: int | None = Query(None),
+                    zona: str | None = Query(None),
                     sector: str | None = Query(None),
                     rango_edad: str | None = Query(None), _=Depends(sesion)):
     """Análisis foliar del laboratorio, por lote y nutriente."""
-    lotes, _p, _f = _cargar(anio, zona, sector, rango_edad)
+    eid = _empresa(empresa_id)
+    lotes, _p, _f = _cargar(eid, anio, zona, sector, rango_edad)
     nutrientes = ordenar_nutrientes(
         {k for l in lotes for k in (l.get("foliar") or {})})
     salida = [{"id": l["id"], "identificacion": l["identificacion"],
@@ -213,17 +281,18 @@ def get_diagnostico(anio: int = Query(...), zona: str | None = Query(None),
                "sector": l.get("sector"), "rango_edad": l.get("rango_edad"),
                "palmas": l.get("palmas"), "mst": l.get("mst"),
                "foliar": l.get("foliar") or {}} for l in lotes]
-    return {"ok": True, "anio": anio, "total": len(salida),
+    return {"ok": True, "anio": anio, "empresa_id": eid, "total": len(salida),
             "nutrientes": nutrientes, "lotes": salida,
-            **repo.filtros_de_campana(anio)}
+            **repo.filtros_de_campana(eid, anio)}
 
 
 @router.get("/lotes/{lote_id}")
-def get_lote(lote_id: int, anio: int = Query(...), _=Depends(sesion)):
+def get_lote(lote_id: int, anio: int = Query(...),
+             empresa_id: int | None = Query(None), _=Depends(sesion)):
     fila = repo.obtener_lote(lote_id)
     if not fila:
         raise HTTPException(404, "Lote no encontrado.")
-    params = repo.parametros_o_default(anio)
+    params = repo.parametros_o_default(_empresa(empresa_id), anio)
     return {"ok": True, "lote": preparar_lote(
         {k: _limpiar(v) for k, v in fila.items()}, params)}
 
@@ -248,23 +317,27 @@ def delete_lote(lote_id: int, _=Depends(sesion)):
 
 @router.get("/consolidado")
 def get_consolidado(anio: int = Query(...),
+                    empresa_id: int | None = Query(None),
                     por: str = Query("zona",
                         pattern="^(zona|sector|rango_edad|material)$"),
                     _=Depends(sesion)):
-    lotes, params, ferts = _cargar(anio)
+    eid = _empresa(empresa_id)
+    lotes, params, ferts = _cargar(eid, anio)
     if not lotes:
         return {"ok": True, "anio": anio, "grupos": [], "total": {}}
     r = consolidar(lotes, por, params, ferts)
-    return {"ok": True, "anio": anio, "agrupado_por": por,
+    return {"ok": True, "anio": anio, "empresa_id": eid, "agrupado_por": por,
             "fertilizantes": ferts, **r}
 
 
 @router.get("/dashboard")
-def get_dashboard(anio: int = Query(...), _=Depends(sesion)):
+def get_dashboard(anio: int = Query(...), empresa_id: int | None = Query(None),
+                  _=Depends(sesion)):
     """Todo lo que necesita la pantalla de resumen, en una sola llamada."""
-    lotes, params, ferts = _cargar(anio)
+    eid = _empresa(empresa_id)
+    lotes, params, ferts = _cargar(eid, anio)
     if not lotes:
-        return {"ok": True, "anio": anio, "vacio": True}
+        return {"ok": True, "anio": anio, "empresa_id": eid, "vacio": True}
 
     por_zona = consolidar(lotes, "zona", params, ferts)
     por_sector = consolidar(lotes, "sector", params, ferts)
@@ -286,7 +359,7 @@ def get_dashboard(anio: int = Query(...), _=Depends(sesion)):
     top = sorted(lotes, key=lambda l: l["costos"]["costo_total"], reverse=True)[:10]
 
     return {
-        "ok": True, "anio": anio, "vacio": False,
+        "ok": True, "anio": anio, "empresa_id": eid, "vacio": False,
         "total": por_zona["total"],
         "por_zona": por_zona["grupos"],
         "por_sector": por_sector["grupos"],
@@ -304,14 +377,15 @@ def get_dashboard(anio: int = Query(...), _=Depends(sesion)):
 
 @router.get("/comparativo")
 def get_comparativo(anios: str = Query(..., description="Ej: 2025,2026"),
-                    _=Depends(sesion)):
+                    empresa_id: int | None = Query(None), _=Depends(sesion)):
+    eid = _empresa(empresa_id)
     datos, todos = {}, set()
     for texto in anios.split(","):
         texto = texto.strip()
         if not texto.isdigit():
             continue
         anio = int(texto)
-        lotes, params, ferts = _cargar(anio)
+        lotes, params, ferts = _cargar(eid, anio)
         if lotes:
             datos[anio] = consolidar(lotes, "zona", params, ferts)
             todos.update(ferts)

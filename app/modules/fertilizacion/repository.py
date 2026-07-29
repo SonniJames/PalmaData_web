@@ -18,42 +18,83 @@ TABLAS_BLOQUE = {clave: tabla for clave, (_h, tabla, _e) in F.HOJAS_DATOS.items(
 
 
 # ============================================================
-#  CAMPAÑAS
+#  EMPRESAS
+#  La campaña es "empresa + año". Como los lotes y los parámetros
+#  cuelgan de la campaña, la separación por empresa se propaga sola.
 # ============================================================
 
-def listar_campanas() -> list[dict]:
-    return db.fetch_all("""
-        SELECT c.id, c.anio, c.nombre, c.estado, c.archivo,
-               c.cargado_por, c.created_at,
-               COUNT(l.id) AS lotes
-        FROM plantacion.fert_campana c
-        LEFT JOIN plantacion.fert_lote l ON l.campana_id = c.id
-        GROUP BY c.id
-        ORDER BY c.anio DESC
+def listar_empresas(solo_activas: bool = True) -> list[dict]:
+    sql = "SELECT id, nombre, nit, orden, activo FROM plantacion.fert_empresa"
+    if solo_activas:
+        sql += " WHERE activo"
+    sql += " ORDER BY orden, nombre"
+    return db.fetch_all(sql)
+
+
+def empresa_por_id(empresa_id: int) -> dict | None:
+    return db.fetch_one(
+        "SELECT id, nombre FROM plantacion.fert_empresa WHERE id=%s", (empresa_id,))
+
+
+def empresa_por_nombre(nombre: str) -> dict | None:
+    return db.fetch_one(
+        "SELECT id, nombre FROM plantacion.fert_empresa WHERE LOWER(nombre)=LOWER(%s)",
+        (nombre,))
+
+
+def empresa_por_defecto() -> dict | None:
+    return db.fetch_one("""
+        SELECT id, nombre FROM plantacion.fert_empresa
+        WHERE activo ORDER BY orden, nombre LIMIT 1
     """)
 
 
-def campana_por_anio(anio: int) -> dict | None:
-    return db.fetch_one(
-        "SELECT id, anio, nombre, estado FROM plantacion.fert_campana WHERE anio=%s",
-        (anio,))
+# ============================================================
+#  CAMPAÑAS
+# ============================================================
+
+def listar_campanas(empresa_id: int | None = None) -> list[dict]:
+    sql = """
+        SELECT c.id, c.anio, c.nombre, c.estado, c.archivo,
+               c.cargado_por, c.created_at,
+               c.empresa_id, e.nombre AS empresa,
+               COUNT(l.id) AS lotes
+        FROM plantacion.fert_campana c
+        JOIN plantacion.fert_empresa e ON e.id = c.empresa_id
+        LEFT JOIN plantacion.fert_lote l ON l.campana_id = c.id
+    """
+    params: tuple = ()
+    if empresa_id:
+        sql += " WHERE c.empresa_id = %s"
+        params = (empresa_id,)
+    sql += " GROUP BY c.id, e.nombre, e.orden ORDER BY e.orden, c.anio DESC"
+    return db.fetch_all(sql, params)
 
 
-def crear_campana(cur, anio: int, nombre=None, archivo=None,
+def campana_por_anio(empresa_id: int, anio: int) -> dict | None:
+    return db.fetch_one("""
+        SELECT id, anio, nombre, estado, empresa_id
+        FROM plantacion.fert_campana WHERE empresa_id=%s AND anio=%s
+    """, (empresa_id, anio))
+
+
+def crear_campana(cur, empresa_id: int, anio: int, nombre=None, archivo=None,
                   usuario=None, copiar_de=None) -> int:
     cur.execute("""
-        INSERT INTO plantacion.fert_campana (anio, nombre, archivo, cargado_por)
-        VALUES (%s,%s,%s,%s) RETURNING id
-    """, (anio, nombre or f"Fertilización {anio}", archivo, usuario))
+        INSERT INTO plantacion.fert_campana
+            (empresa_id, anio, nombre, archivo, cargado_por)
+        VALUES (%s,%s,%s,%s,%s) RETURNING id
+    """, (empresa_id, anio, nombre or f"Fertilización {anio}", archivo, usuario))
     campana_id = cur.fetchone()["id"]
 
+    # Hereda los parámetros de otra campaña DE LA MISMA EMPRESA
     params = None
     if copiar_de:
         cur.execute("""
             SELECT p.params FROM plantacion.fert_parametros p
             JOIN plantacion.fert_campana c ON c.id = p.campana_id
-            WHERE c.anio = %s
-        """, (copiar_de,))
+            WHERE c.empresa_id = %s AND c.anio = %s
+        """, (empresa_id, copiar_de))
         fila = cur.fetchone()
         if fila:
             params = fila["params"]
@@ -64,8 +105,10 @@ def crear_campana(cur, anio: int, nombre=None, archivo=None,
     return campana_id
 
 
-def obtener_o_crear_campana(cur, anio: int, archivo=None, usuario=None) -> int:
-    cur.execute("SELECT id FROM plantacion.fert_campana WHERE anio=%s", (anio,))
+def obtener_o_crear_campana(cur, empresa_id: int, anio: int,
+                            archivo=None, usuario=None) -> int:
+    cur.execute("""SELECT id FROM plantacion.fert_campana
+                   WHERE empresa_id=%s AND anio=%s""", (empresa_id, anio))
     fila = cur.fetchone()
     if fila:
         if archivo:
@@ -73,23 +116,26 @@ def obtener_o_crear_campana(cur, anio: int, archivo=None, usuario=None) -> int:
                            SET archivo=%s, cargado_por=%s WHERE id=%s""",
                         (archivo, usuario, fila["id"]))
         return fila["id"]
-    # Al crear un año nuevo, hereda los parámetros del más reciente
-    cur.execute("SELECT MAX(anio) AS ultimo FROM plantacion.fert_campana")
+    # Año nuevo: hereda los parámetros de la campaña más reciente de ESA empresa
+    cur.execute("""SELECT MAX(anio) AS ultimo FROM plantacion.fert_campana
+                   WHERE empresa_id=%s""", (empresa_id,))
     ultimo = (cur.fetchone() or {}).get("ultimo")
-    return crear_campana(cur, anio, archivo=archivo, usuario=usuario,
-                         copiar_de=ultimo)
+    return crear_campana(cur, empresa_id, anio, archivo=archivo,
+                         usuario=usuario, copiar_de=ultimo)
 
 
-def eliminar_campana(anio: int) -> bool:
+def eliminar_campana(empresa_id: int, anio: int) -> bool:
     with db.get_cursor() as cur:
-        cur.execute("DELETE FROM plantacion.fert_campana WHERE anio=%s", (anio,))
+        cur.execute("""DELETE FROM plantacion.fert_campana
+                       WHERE empresa_id=%s AND anio=%s""", (empresa_id, anio))
         return cur.rowcount > 0
 
 
-def cerrar_campana(anio: int, cerrada: bool) -> bool:
+def cerrar_campana(empresa_id: int, anio: int, cerrada: bool) -> bool:
     with db.get_cursor() as cur:
-        cur.execute("UPDATE plantacion.fert_campana SET estado=%s WHERE anio=%s",
-                    (0 if cerrada else 1, anio))
+        cur.execute("""UPDATE plantacion.fert_campana SET estado=%s
+                       WHERE empresa_id=%s AND anio=%s""",
+                    (0 if cerrada else 1, empresa_id, anio))
         return cur.rowcount > 0
 
 
@@ -97,23 +143,24 @@ def cerrar_campana(anio: int, cerrada: bool) -> bool:
 #  PARÁMETROS
 # ============================================================
 
-def obtener_parametros(anio: int) -> dict | None:
+def obtener_parametros(empresa_id: int, anio: int) -> dict | None:
     fila = db.fetch_one("""
         SELECT p.params FROM plantacion.fert_parametros p
         JOIN plantacion.fert_campana c ON c.id = p.campana_id
-        WHERE c.anio = %s
-    """, (anio,))
+        WHERE c.empresa_id = %s AND c.anio = %s
+    """, (empresa_id, anio))
     return merge_params(get_default_params(), fila["params"] or {}) if fila else None
 
 
-def parametros_o_default(anio: int) -> dict:
-    return obtener_parametros(anio) or get_default_params()
+def parametros_o_default(empresa_id: int, anio: int) -> dict:
+    return obtener_parametros(empresa_id, anio) or get_default_params()
 
 
-def guardar_parametros(anio: int, params: dict) -> bool:
+def guardar_parametros(empresa_id: int, anio: int, params: dict) -> bool:
     completos = merge_params(get_default_params(), params)
     with db.get_cursor() as cur:
-        cur.execute("SELECT id FROM plantacion.fert_campana WHERE anio=%s", (anio,))
+        cur.execute("""SELECT id FROM plantacion.fert_campana
+                       WHERE empresa_id=%s AND anio=%s""", (empresa_id, anio))
         camp = cur.fetchone()
         if not camp:
             return False
@@ -202,9 +249,10 @@ _SELECT = """
 """
 
 
-def listar_lotes(anio: int, zona=None, sector=None, rango_edad=None) -> list[dict]:
-    sql = _SELECT + " WHERE c.anio = %s"
-    params: list = [anio]
+def listar_lotes(empresa_id: int, anio: int, zona=None, sector=None,
+                 rango_edad=None) -> list[dict]:
+    sql = _SELECT + " WHERE c.empresa_id = %s AND c.anio = %s"
+    params: list = [empresa_id, anio]
     if zona and zona.lower() != "todas":
         sql += " AND l.zona = %s"
         params.append(zona)
@@ -222,16 +270,16 @@ def obtener_lote(lote_id: int) -> dict | None:
     return db.fetch_one(_SELECT + " WHERE l.id = %s", (lote_id,))
 
 
-def filtros_de_campana(anio: int) -> dict:
+def filtros_de_campana(empresa_id: int, anio: int) -> dict:
     base = """
         FROM plantacion.fert_lote l
         JOIN plantacion.fert_campana c ON c.id = l.campana_id
-        WHERE c.anio = %s
+        WHERE c.empresa_id = %s AND c.anio = %s
     """
     def distintos(columna):
         filas = db.fetch_all(
             f"SELECT DISTINCT l.{columna} AS v {base} AND l.{columna} IS NOT NULL "
-            f"ORDER BY v", (anio,))
+            f"ORDER BY v", (empresa_id, anio))
         return [f["v"] for f in filas]
 
     return {"zonas": distintos("zona"),
@@ -239,29 +287,34 @@ def filtros_de_campana(anio: int) -> dict:
             "rangos_edad": distintos("rango_edad")}
 
 
-def fertilizantes_de_campana(anio: int) -> list[str]:
-    """Nombres de los fertilizantes que trajo el Excel de esa campaña."""
+def fertilizantes_de_campana(empresa_id: int, anio: int) -> list[str]:
+    """
+    Fertilizantes que trajo el Excel de esa empresa en ese año.
+    Cada empresa puede usar productos distintos: salen de los datos,
+    no de una lista fija en el código.
+    """
     filas = db.fetch_all("""
         SELECT DISTINCT kv.key AS producto
         FROM plantacion.fert_requerimiento r
         JOIN plantacion.fert_lote l    ON l.id = r.lote_id
         JOIN plantacion.fert_campana c ON c.id = l.campana_id,
              LATERAL jsonb_each(r.datos) kv
-        WHERE c.anio = %s
+        WHERE c.empresa_id = %s AND c.anio = %s
         ORDER BY producto
-    """, (anio,))
+    """, (empresa_id, anio))
     return [f["producto"] for f in filas]
 
 
-def nutrientes_de_campana(anio: int, tabla: str = "fert_foliar") -> list[str]:
+def nutrientes_de_campana(empresa_id: int, anio: int,
+                          tabla: str = "fert_foliar") -> list[str]:
     filas = db.fetch_all(f"""
         SELECT DISTINCT kv.key AS nutriente
         FROM plantacion.{tabla} t
         JOIN plantacion.fert_lote l    ON l.id = t.lote_id
         JOIN plantacion.fert_campana c ON c.id = l.campana_id,
              LATERAL jsonb_each(t.datos) kv
-        WHERE c.anio = %s
-    """, (anio,))
+        WHERE c.empresa_id = %s AND c.anio = %s
+    """, (empresa_id, anio))
     return [f["nutriente"] for f in filas]
 
 
@@ -285,11 +338,12 @@ def eliminar_lote(lote_id: int) -> bool:
         return cur.rowcount > 0
 
 
-def identificaciones_de_campana(anio: int) -> list[str]:
+def identificaciones_de_campana(empresa_id: int, anio: int) -> list[str]:
     """Para precargar el formato de descarga con los lotes del año anterior."""
     filas = db.fetch_all("""
         SELECT l.identificacion FROM plantacion.fert_lote l
         JOIN plantacion.fert_campana c ON c.id = l.campana_id
-        WHERE c.anio = %s ORDER BY l.uma NULLS LAST, l.identificacion
-    """, (anio,))
+        WHERE c.empresa_id = %s AND c.anio = %s
+        ORDER BY l.uma NULLS LAST, l.identificacion
+    """, (empresa_id, anio))
     return [f["identificacion"] for f in filas]

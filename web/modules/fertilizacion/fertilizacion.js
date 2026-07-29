@@ -6,6 +6,7 @@
 import { API } from './api.js';
 
 const S = {
+  empresaId: null, empresa: null, empresas: [],
   anio: null, campanas: [],
   zona: 'Todas', sector: 'Todos', rangoEdad: 'Todas',
   zonas: [], sectores: [], rangos: [],
@@ -34,16 +35,29 @@ const COL_ESTADO = {
 // ============================================================
 export async function montar(cont, sub = 'resumen') {
   S.tab = sub || 'resumen';
-  cont.innerHTML = `<div class="cargando">Cargando campañas…</div>`;
+  cont.innerHTML = `<div class="cargando">Cargando empresas…</div>`;
   try {
-    S.campanas = (await API.campanas()).campanas || [];
+    S.empresas = (await API.empresas()).empresas || [];
+    if (!S.empresas.length) {
+      cont.innerHTML = `<div class="msg msg-err">No hay empresas registradas.
+        Ejecuta <code>deploy/06_fert_empresas.sql</code> en la base de datos.</div>`;
+      return;
+    }
+    if (!S.empresaId) S.empresaId = S.empresas[0].id;
+    await cargarCampanas();
   } catch (e) {
     cont.innerHTML = `<div class="msg msg-err">${esc(e.message)}</div>`;
     return;
   }
-  if (!S.anio) S.anio = S.campanas.length ? S.campanas[0].anio : new Date().getFullYear();
   esqueleto(cont);
   await cargar();
+}
+
+async function cargarCampanas() {
+  S.campanas = (await API.campanas(S.empresaId)).campanas || [];
+  S.empresa = (S.empresas.find(e => e.id === S.empresaId) || {}).nombre || null;
+  const hay = S.campanas.some(c => c.anio === S.anio);
+  if (!hay) S.anio = S.campanas.length ? S.campanas[0].anio : new Date().getFullYear();
 }
 
 function esqueleto(cont) {
@@ -53,6 +67,9 @@ function esqueleto(cont) {
 
   cont.innerHTML = `
     <div class="fbar">
+      <div class="g"><label for="fEm">Empresa</label>
+        <select id="fEm" style="min-width:170px">${S.empresas.map(e =>
+          `<option value="${e.id}" ${e.id === S.empresaId ? 'selected' : ''}>${esc(e.nombre)}</option>`).join('')}</select></div>
       <div class="g"><label for="fA">Campaña</label><select id="fA">${ops}</select></div>
       <div class="g"><label for="fS">Sector</label><select id="fS"><option>Todos</option></select></div>
       <div class="g"><label for="fZ">Zona</label><select id="fZ"><option>Todas</option></select></div>
@@ -70,6 +87,16 @@ function esqueleto(cont) {
     </div>
     <div id="fC"></div>`;
 
+  $('#fEm').onchange = async e => {
+    S.empresaId = +e.target.value;
+    S.zona = 'Todas'; S.sector = 'Todos'; S.rangoEdad = 'Todas';
+    await cargarCampanas();
+    const sel = $('#fA');
+    sel.innerHTML = S.campanas.length
+      ? S.campanas.map(c => `<option value="${c.anio}" ${c.anio === S.anio ? 'selected' : ''}>${c.anio} · ${c.lotes} lotes</option>`).join('')
+      : `<option value="${S.anio}">${S.anio}</option>`;
+    cargar();
+  };
   $('#fA').onchange = e => {
     S.anio = +e.target.value;
     S.zona = 'Todas'; S.sector = 'Todos'; S.rangoEdad = 'Todas';
@@ -96,7 +123,7 @@ async function cargar() {
 
   c.innerHTML = `<div class="cargando">Cargando…</div>`;
   try {
-    const f = { zona: S.zona, sector: S.sector, rangoEdad: S.rangoEdad };
+    const f = { empresaId: S.empresaId, zona: S.zona, sector: S.sector, rangoEdad: S.rangoEdad };
     const r = await API.lotes(S.anio, f);
     S.lotes = r.lotes || [];
     S.zonas = r.zonas || []; S.sectores = r.sectores || []; S.rangos = r.rangos_edad || [];
@@ -110,8 +137,9 @@ async function cargar() {
 }
 
 function vacio(c) {
-  c.innerHTML = `<div class="vacio"><h3>Sin datos para ${S.anio}</h3>
-    <p>Carga el Excel en la pestaña <strong>Cargar datos</strong>.</p></div>`;
+  c.innerHTML = `<div class="vacio">
+    <h3>Sin datos para ${esc(S.empresa || '')} · ${S.anio}</h3>
+    <p>Carga el Excel de esta empresa en la pestaña <strong>Cargar datos</strong>.</p></div>`;
 }
 
 function pintarFiltros() {
@@ -131,7 +159,7 @@ function pintarFiltros() {
 async function vistaResumen(c) {
   c.innerHTML = `<div class="cargando">Calculando indicadores…</div>`;
   let d;
-  try { d = await API.dashboard(S.anio); }
+  try { d = await API.dashboard(S.anio, S.empresaId); }
   catch (e) { c.innerHTML = `<div class="msg msg-err">${esc(e.message)}</div>`; return; }
   if (d.vacio) return vacio(c);
 
@@ -279,7 +307,8 @@ async function vistaDiagnostico(c) {
   c.innerHTML = `<div class="cargando">Cargando análisis foliar…</div>`;
   let d;
   try {
-    d = await API.diagnostico(S.anio, { zona: S.zona, sector: S.sector, rangoEdad: S.rangoEdad });
+    d = await API.diagnostico(S.anio, { empresaId: S.empresaId, zona: S.zona,
+                                        sector: S.sector, rangoEdad: S.rangoEdad });
   } catch (e) { c.innerHTML = `<div class="msg msg-err">${esc(e.message)}</div>`; return; }
 
   S.zonas = d.zonas || []; S.sectores = d.sectores || []; S.rangos = d.rangos_edad || [];
@@ -355,16 +384,13 @@ function vistaBalance(c) {
   }
 
   const palmas = S.lotes.reduce((a, l) => a + (l.palmas || 0), 0);
-  const conTons = S.lotes.filter(l => +l.tons > 0);
-  const tons = conTons.length
-    ? conTons.reduce((a, l) => a + (+l.tons || 0), 0) / conTons.length
-    : 0;
+  const tons = S.lotes.reduce((a, l) => a + (+l.tons || 0), 0);
 
   c.innerHTML = `
     <div class="kpis">
       <div class="kpi"><div class="l">Lotes</div><div class="v">${n0(S.lotes.length)}</div></div>
       <div class="kpi"><div class="l">Palmas</div><div class="v">${n0(palmas)}</div></div>
-      <div class="kpi"><div class="l">Cosecha esperada</div><div class="v">${n2(tons, 1)}</div><div class="s">toneladas</div></div>
+      <div class="kpi"><div class="l">Cosecha esperada</div><div class="v">${n0(tons)}</div><div class="s">toneladas</div></div>
     </div>
     <div class="twrap">
       <table class="ft">
@@ -453,7 +479,7 @@ function vistaPlan(c) {
 async function vistaParams(c) {
   c.innerHTML = `<div class="cargando">Cargando parámetros…</div>`;
   let r;
-  try { r = await API.parametros(S.anio); }
+  try { r = await API.parametros(S.anio, S.empresaId); }
   catch (e) {
     c.innerHTML = `<div class="msg msg-err">${esc(e.message)}<br>
       Carga primero un Excel para la campaña ${S.anio}.</div>`; return;
@@ -466,7 +492,7 @@ async function vistaParams(c) {
   const bloquePrecios = ferts.length ? `
     <div class="pgrp">
       <button class="phead open" data-t="precios">
-        <span>Precios de fertilizantes · campaña ${S.anio}</span><span class="ar">▸</span></button>
+        <span>Precios · ${esc(r.empresa || S.empresa || '')} · ${S.anio}</span><span class="ar">▸</span></button>
       <div class="pbody open" data-b="precios">
         ${ferts.map(f => `<div class="pf">
           <label>${esc(f)}</label>
@@ -495,12 +521,18 @@ async function vistaParams(c) {
           Si el flete es igual para todos los productos, escríbelo aquí y aplícalo.</span>
       </div>
     </div>`
-    : `<div class="msg msg-warn">Aún no hay fertilizantes cargados para ${S.anio}.
-        Sube el Excel y aquí aparecerán sus productos para ponerles precio y flete.</div>`;
+    : `<div class="msg msg-warn">Aún no hay fertilizantes cargados para
+        ${esc(r.empresa || S.empresa || '')} en ${S.anio}. Sube el Excel de esta
+        empresa y aquí aparecerán sus productos para ponerles precio y flete.</div>`;
 
   c.innerHTML = `
     <div class="card">
-      <h3>Parámetros de la campaña ${S.anio}</h3>
+      <h3>Parámetros · ${esc(r.empresa || S.empresa || '')} · campaña ${S.anio}</h3>
+      <div class="msg msg-warn" style="margin:0 0 14px">
+        Estos parámetros aplican <strong>solo a ${esc(r.empresa || S.empresa || '')}
+        en ${S.anio}</strong>. Verifica arriba que la empresa sea la correcta antes
+        de guardar: cada empresa tiene sus propios fertilizantes y precios.
+      </div>
       <p class="sub">El sistema no recalcula la agronomía del Excel. Aquí se ajusta lo que
         el archivo no trae: los precios de los fertilizantes de esta campaña, el flete,
         los umbrales de color y las hectáreas. Todo se guarda por año, así el histórico
@@ -578,7 +610,7 @@ async function vistaParams(c) {
     nuevos.hectareas = isNaN(ha) ? 0 : ha;
 
     try {
-      await API.guardarParametros(S.anio, nuevos);
+      await API.guardarParametros(S.anio, S.empresaId, nuevos);
       S.params = nuevos;
       $('#pM').innerHTML = `<div class="msg msg-ok">Guardado. Los costos de ${S.anio} ya usan estos valores.</div>`;
     } catch (e) {
@@ -596,18 +628,34 @@ function vistaCarga(c) {
   c.innerHTML = `
     <div class="card">
       <h3>Cargar el Excel de la campaña</h3>
-      <p class="sub">El archivo tiene una hoja por concepto. El sistema guarda los valores
-        tal como vienen: no recalcula ninguna fórmula.</p>
+      <p class="sub">Un archivo por empresa. El sistema guarda los valores tal como
+        vienen: no recalcula ninguna fórmula.</p>
 
-      <div class="fbar" style="margin-bottom:16px">
+      <div class="fbar" style="margin-bottom:10px">
+        <div class="g"><label for="cEm">Empresa</label>
+          <select id="cEm" style="min-width:180px">${S.empresas.map(e =>
+            `<option value="${e.id}" ${e.id === S.empresaId ? 'selected' : ''}>${esc(e.nombre)}</option>`).join('')}</select></div>
         <div class="g"><label for="cA">Año</label>
           <input type="number" id="cA" min="1990" max="2100" step="1"
                  value="${S.anio}" style="width:110px"></div>
-        <div class="g"><label style="display:flex;align-items:center;gap:7px;cursor:pointer">
-          <input type="checkbox" id="cRe"> Reemplazar todo el año</label></div>
         <div class="sp"></div>
-        <a class="btn btn-ghost" href="${API.urlFormato()}" download>Formato en blanco</a>
-        ${previa ? `<a class="btn btn-ghost" href="${API.urlFormato(previa)}" download>Formato con los lotes de ${previa}</a>` : ''}
+        <a class="btn btn-ghost" id="cF1" href="#" download>Formato en blanco</a>
+        ${previa ? `<a class="btn btn-ghost" id="cF2" href="#" download>Formato con los lotes de ${previa}</a>` : ''}
+      </div>
+
+      <div class="msg msg-warn" style="margin:0 0 16px">
+        <strong>Verifica la empresa antes de cargar.</strong> Al subir el archivo se
+        reemplazan los datos de esa empresa en ese año. Si el Excel trae la columna
+        <em>empresa</em> en la hoja identificacion, el sistema comprueba que coincida
+        y te avisa si no.
+      </div>
+
+      <div class="fbar" style="margin-bottom:16px">
+        <div class="g"><label style="display:flex;align-items:center;gap:7px;cursor:pointer">
+          <input type="checkbox" id="cRe" checked> Reemplazar los datos de esa empresa y año</label></div>
+        <div class="sp"></div>
+        <span style="font-size:12.5px;color:var(--ink-soft)">
+          Desmárcalo solo si quieres agregar lotes sin borrar los existentes.</span>
       </div>
 
       <div class="dz" id="cZ">
@@ -631,7 +679,8 @@ function vistaCarga(c) {
           <thead><tr><th>Hoja</th><th>Qué contiene</th><th>Dónde se usa</th></tr></thead>
           <tbody>
             <tr><td class="ln">identificacion</td>
-              <td>Quién es cada lote: uma, sector, zona, rango de edad, palmas, hectáreas, mst, tons</td>
+              <td>Quién es cada lote: empresa (opcional, para validar), uma, sector, zona,
+                  rango de edad, palmas, hectáreas, mst, tons</td>
               <td>Filtros y agrupaciones</td></tr>
             <tr><td class="ln">anal_foliar</td>
               <td>Resultado del laboratorio, una columna por nutriente</td>
@@ -654,6 +703,14 @@ function vistaCarga(c) {
 
   const z = $('#cZ'), inp = $('#cF'), btn = $('#cS');
   let archivo = null;
+
+  const refrescarEnlaces = () => {
+    const eid = +$('#cEm').value;
+    const a = $('#cF1'); if (a) a.href = API.urlFormato(eid);
+    const b = $('#cF2'); if (b) b.href = API.urlFormato(eid, previa);
+  };
+  refrescarEnlaces();
+  $('#cEm').onchange = refrescarEnlaces;
   const elegir = f => {
     if (!f) return;
     archivo = f;
@@ -671,25 +728,33 @@ function vistaCarga(c) {
   z.addEventListener('drop', e => elegir(e.dataTransfer.files[0]));
 
   btn.onclick = async () => {
-    const anio = +$('#cA').value, m = $('#cM');
+    const anio = +$('#cA').value, eid = +$('#cEm').value, m = $('#cM');
     if (!anio || anio < 1990 || anio > 2100) {
       m.innerHTML = `<div class="msg msg-err">Escribe un año válido (entre 1990 y 2100).</div>`;
       return;
     }
+    if (!eid) {
+      m.innerHTML = `<div class="msg msg-err">Selecciona la empresa antes de cargar.</div>`;
+      return;
+    }
+    const nom = (S.empresas.find(x => x.id === eid) || {}).nombre || '';
+    if (!confirm(`Vas a cargar este archivo como «${nom}» · campaña ${anio}.\n\n¿Es correcto?`)) return;
+
     btn.disabled = true; btn.textContent = 'Cargando…'; m.innerHTML = '';
     try {
-      const r = await API.cargar(anio, archivo, $('#cRe').checked);
+      const r = await API.cargar(anio, eid, archivo, $('#cRe').checked);
       const av = (r.advertencias || []).length
         ? `<ul>${r.advertencias.map(a => `<li>${esc(a)}</li>`).join('')}</ul>` : '';
       const cols = r.columnas || {};
       const detalle = Object.entries(cols).filter(([, v]) => v.length)
         .map(([k, v]) => `<li><strong>${esc(k)}</strong>: ${v.map(esc).join(', ')}</li>`).join('');
       m.innerHTML = `<div class="msg ${av ? 'msg-warn' : 'msg-ok'}">
-        Campaña ${r.anio}: ${r.lotes_leidos} lotes · ${r.nuevos} nuevos ·
-        ${r.actualizados} actualizados${r.borrados ? ` · ${r.borrados} borrados` : ''}.
+        <strong>${esc(r.empresa)}</strong> · campaña ${r.anio}: ${r.lotes_leidos} lotes ·
+        ${r.nuevos} nuevos · ${r.actualizados} actualizados${r.borrados ? ` · ${r.borrados} reemplazados` : ''}.
         ${detalle ? `<ul>${detalle}</ul>` : ''}${av}</div>`;
-      S.anio = anio;
-      S.campanas = (await API.campanas()).campanas || [];
+      S.anio = anio; S.empresaId = eid;
+      $('#fEm').value = eid;
+      await cargarCampanas();
       $('#fA').innerHTML = S.campanas.map(x =>
         `<option value="${x.anio}" ${x.anio === anio ? 'selected' : ''}>${x.anio} · ${x.lotes} lotes</option>`).join('');
     } catch (e) {

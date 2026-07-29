@@ -20,8 +20,9 @@ const json = (metodo, cuerpo) => ({
   body: JSON.stringify(cuerpo),
 });
 
-const filtros = (anio, { zona, sector, rangoEdad } = {}) => {
+const filtros = (anio, { empresaId, zona, sector, rangoEdad } = {}) => {
   const q = new URLSearchParams({ anio });
+  if (empresaId) q.append('empresa_id', empresaId);
   if (zona && zona !== 'Todas') q.append('zona', zona);
   if (sector && sector !== 'Todos') q.append('sector', sector);
   if (rangoEdad && rangoEdad !== 'Todas') q.append('rango_edad', rangoEdad);
@@ -29,24 +30,35 @@ const filtros = (anio, { zona, sector, rangoEdad } = {}) => {
 };
 
 export const API = {
+  // Empresas
+  empresas: () => pedir(`${BASE}/empresas`),
+
   // Campañas
-  campanas: () => pedir(`${BASE}/campanas`),
+  campanas: (empresaId) =>
+    pedir(`${BASE}/campanas${empresaId ? `?empresa_id=${empresaId}` : ''}`),
   crearCampana: (anio, nombre, copiarDe) =>
     pedir(`${BASE}/campanas`, json('POST', { anio, nombre, copiar_de: copiarDe || null })),
   borrarCampana: (anio) => pedir(`${BASE}/campanas/${anio}`, { method: 'DELETE' }),
   cerrarCampana: (anio, cerrada) =>
     pedir(`${BASE}/campanas/${anio}/estado`, json('PUT', { cerrada })),
 
-  // Parámetros
-  parametros: (anio) => pedir(`${BASE}/parametros/${anio}`),
-  guardarParametros: (anio, params) =>
-    pedir(`${BASE}/parametros/${anio}`, json('PUT', params)),
+  // Parámetros · son de una empresa y un año concretos
+  parametros: (anio, empresaId) =>
+    pedir(`${BASE}/parametros/${anio}?empresa_id=${empresaId}`),
+  guardarParametros: (anio, empresaId, params) =>
+    pedir(`${BASE}/parametros/${anio}`, json('PUT', { ...params, empresa_id: empresaId })),
 
   // Carga
-  urlFormato: (desde) => `${BASE}/formato${desde ? `?desde=${desde}` : ''}`,
-  cargar: (anio, archivo, reemplazar = false) => {
+  urlFormato: (empresaId, desde) => {
+    const q = new URLSearchParams();
+    if (empresaId) q.append('empresa_id', empresaId);
+    if (desde) q.append('desde', desde);
+    return `${BASE}/formato?${q}`;
+  },
+  cargar: (anio, empresaId, archivo, reemplazar = true) => {
     const fd = new FormData();
     fd.append('anio', anio);
+    fd.append('empresa_id', empresaId);
     fd.append('archivo', archivo);
     fd.append('reemplazar', reemplazar);
     return pedir(`${BASE}/carga`, { method: 'POST', body: fd });
@@ -58,8 +70,10 @@ export const API = {
   lote: (id, anio) => pedir(`${BASE}/lotes/${id}?anio=${anio}`),
   borrarLote: (id) => pedir(`${BASE}/lotes/${id}`, { method: 'DELETE' }),
 
-  dashboard: (anio) => pedir(`${BASE}/dashboard?anio=${anio}`),
-  consolidado: (anio, por = 'zona') =>
-    pedir(`${BASE}/consolidado?anio=${anio}&por=${por}`),
-  comparativo: (anios) => pedir(`${BASE}/comparativo?anios=${anios.join(',')}`),
+  dashboard: (anio, empresaId) =>
+    pedir(`${BASE}/dashboard?anio=${anio}&empresa_id=${empresaId}`),
+  consolidado: (anio, empresaId, por = 'zona') =>
+    pedir(`${BASE}/consolidado?anio=${anio}&empresa_id=${empresaId}&por=${por}`),
+  comparativo: (anios, empresaId) =>
+    pedir(`${BASE}/comparativo?anios=${anios.join(',')}&empresa_id=${empresaId}`),
 };
