@@ -20,12 +20,15 @@ const json = (metodo, cuerpo) => ({
   body: JSON.stringify(cuerpo),
 });
 
-const filtros = (anio, { empresaId, zona, sector, rangoEdad } = {}) => {
+const filtros = (anio, { empresaId, zona, sector, rangoEdad,
+                         identificacion, uma } = {}) => {
   const q = new URLSearchParams({ anio });
   if (empresaId) q.append('empresa_id', empresaId);
   if (zona && zona !== 'Todas') q.append('zona', zona);
   if (sector && sector !== 'Todos') q.append('sector', sector);
   if (rangoEdad && rangoEdad !== 'Todas') q.append('rango_edad', rangoEdad);
+  if (identificacion && identificacion.trim()) q.append('identificacion', identificacion.trim());
+  if (uma) q.append('uma', uma);
   return q;
 };
 
@@ -69,6 +72,8 @@ export const API = {
   diagnostico: (anio, f = {}) => pedir(`${BASE}/diagnostico?${filtros(anio, f)}`),
   lote: (id, anio) => pedir(`${BASE}/lotes/${id}?anio=${anio}`),
   borrarLote: (id) => pedir(`${BASE}/lotes/${id}`, { method: 'DELETE' }),
+
+  aplicaciones: (anio, f = {}) => pedir(`${BASE}/aplicaciones?${filtros(anio, f)}`),
 
   dashboard: (anio, empresaId) =>
     pedir(`${BASE}/dashboard?anio=${anio}&empresa_id=${empresaId}`),

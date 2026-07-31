@@ -250,7 +250,7 @@ _SELECT = """
 
 
 def listar_lotes(empresa_id: int, anio: int, zona=None, sector=None,
-                 rango_edad=None) -> list[dict]:
+                 rango_edad=None, identificacion=None, uma=None) -> list[dict]:
     sql = _SELECT + " WHERE c.empresa_id = %s AND c.anio = %s"
     params: list = [empresa_id, anio]
     if zona and zona.lower() != "todas":
@@ -262,6 +262,13 @@ def listar_lotes(empresa_id: int, anio: int, zona=None, sector=None,
     if rango_edad and rango_edad.lower() != "todas":
         sql += " AND l.rango_edad = %s"
         params.append(rango_edad)
+    if identificacion and identificacion.lower() not in ("todas", "todos"):
+        # Coincidencia parcial: permite buscar escribiendo parte del nombre
+        sql += " AND l.identificacion ILIKE %s"
+        params.append(f"%{identificacion}%")
+    if uma not in (None, "", "Todas", "Todos"):
+        sql += " AND l.uma = %s"
+        params.append(int(uma))
     sql += " ORDER BY l.uma NULLS LAST, l.identificacion"
     return db.fetch_all(sql, tuple(params))
 
@@ -282,9 +289,18 @@ def filtros_de_campana(empresa_id: int, anio: int) -> dict:
             f"ORDER BY v", (empresa_id, anio))
         return [f["v"] for f in filas]
 
+    umas = db.fetch_all(
+        f"SELECT DISTINCT l.uma AS v {base} AND l.uma IS NOT NULL ORDER BY v",
+        (empresa_id, anio))
+    idents = db.fetch_all(
+        f"SELECT l.identificacion AS v {base} ORDER BY l.uma NULLS LAST, v",
+        (empresa_id, anio))
+
     return {"zonas": distintos("zona"),
             "sectores": distintos("sector"),
-            "rangos_edad": distintos("rango_edad")}
+            "rangos_edad": distintos("rango_edad"),
+            "umas": [u["v"] for u in umas],
+            "identificaciones": [i["v"] for i in idents]}
 
 
 def fertilizantes_de_campana(empresa_id: int, anio: int) -> list[str]:

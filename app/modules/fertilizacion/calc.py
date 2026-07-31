@@ -219,3 +219,124 @@ def comparar_campanas(datos_por_anio: dict[int, dict]) -> list[dict]:
         salida.append(fila)
 
     return salida
+
+
+# ============================================================
+#  APLICACIONES · análisis enfocado en toneladas, no en costos
+# ============================================================
+
+def _promedio_esperada(lotes: list[dict]) -> float:
+    """
+    Promedio de cosecha esperada. Solo cuenta los lotes que tienen valor:
+    los de levante (sin cosecha aún) bajarían el promedio artificialmente.
+    """
+    vals = [num(l.get("tons")) for l in lotes if num(l.get("tons")) > 0]
+    return round(sum(vals) / len(vals), 2) if vals else 0.0
+
+
+def _totales_grupo(lotes: list[dict], fertilizantes: list[str]) -> dict:
+    """Suma de aplicaciones y dimensiones de un conjunto de lotes."""
+    palmas = sum(int(num(l.get("palmas"))) for l in lotes)
+    hectareas = sum(num(l.get("hectareas")) for l in lotes)
+    por_prod = {f: 0.0 for f in fertilizantes}
+    for l in lotes:
+        req = l.get("requerimiento") or {}
+        for f in fertilizantes:
+            por_prod[f] += num(req.get(f))
+    toneladas = sum(por_prod.values())
+
+    return {
+        "lotes": len(lotes),
+        "palmas": palmas,
+        "hectareas": round(hectareas, 2),
+        "toneladas": round(toneladas, 3),
+        "tons_esperada_prom": _promedio_esperada(lotes),
+        "tons_esperada_total": round(sum(num(l.get("tons")) for l in lotes), 2),
+        "kg_por_palma": round(toneladas * 1000 / palmas, 3) if palmas else 0,
+        "kg_por_hectarea": round(toneladas * 1000 / hectareas, 2) if hectareas else 0,
+        "productos": {f: round(v, 3) for f, v in por_prod.items()},
+    }
+
+
+def _agrupar(lotes: list[dict], por: str, fertilizantes: list[str]) -> list[dict]:
+    grupos: dict[str, list] = {}
+    for l in lotes:
+        grupos.setdefault(l.get(por) or "Sin dato", []).append(l)
+    salida = [{"grupo": clave, **_totales_grupo(items, fertilizantes)}
+              for clave, items in grupos.items()]
+    return sorted(salida, key=lambda x: -x["toneladas"])
+
+
+def aplicaciones(lotes: list[dict], fertilizantes: list[str],
+                 top: int = 15) -> dict:
+    """
+    Análisis del plan en toneladas.
+
+    Devuelve todo lo que necesita la pantalla de Aplicaciones:
+    por fertilizante, por zona, por sector, los lotes que más reciben,
+    y las matrices fertilizante × zona y fertilizante × sector.
+    """
+    total = _totales_grupo(lotes, fertilizantes)
+    tt = total["toneladas"] or 1
+    palmas = total["palmas"] or 1
+    ha = total["hectareas"]
+
+    # --- Por fertilizante ---
+    por_fertilizante = []
+    for f in fertilizantes:
+        t = total["productos"].get(f, 0)
+        por_fertilizante.append({
+            "nombre": f,
+            "toneladas": t,
+            "porcentaje": round(t / tt * 100, 1),
+            "kg_por_palma": round(t * 1000 / palmas, 3),
+            "kg_por_hectarea": round(t * 1000 / ha, 2) if ha else 0,
+            "gramos_por_palma": round(t * 1_000_000 / palmas, 1),
+        })
+    por_fertilizante.sort(key=lambda x: -x["toneladas"])
+
+    # --- Por zona y por sector ---
+    por_zona = _agrupar(lotes, "zona", fertilizantes)
+    por_sector = _agrupar(lotes, "sector", fertilizantes)
+
+    # --- Lotes que más reciben ---
+    ranking = []
+    for l in lotes:
+        req = l.get("requerimiento") or {}
+        t = sum(num(v) for v in req.values())
+        p = int(num(l.get("palmas")))
+        ranking.append({
+            "identificacion": l.get("identificacion"),
+            "uma": l.get("uma"),
+            "zona": l.get("zona"),
+            "sector": l.get("sector"),
+            "palmas": p,
+            "hectareas": num(l.get("hectareas")),
+            "toneladas": round(t, 3),
+            "tons_esperada": num(l.get("tons")),
+            "kg_por_palma": round(t * 1000 / p, 3) if p else 0,
+        })
+    ranking.sort(key=lambda x: -x["toneladas"])
+
+    # --- Matrices fertilizante × grupo ---
+    def matriz(grupos: list[dict]) -> dict:
+        claves = [g["grupo"] for g in grupos]
+        filas = []
+        for f in fertilizantes:
+            valores = {g["grupo"]: g["productos"].get(f, 0) for g in grupos}
+            filas.append({"fertilizante": f, "valores": valores,
+                          "total": round(sum(valores.values()), 3)})
+        filas.sort(key=lambda x: -x["total"])
+        return {"grupos": claves, "filas": filas,
+                "totales": {g["grupo"]: g["toneladas"] for g in grupos}}
+
+    return {
+        "total": total,
+        "por_fertilizante": por_fertilizante,
+        "por_zona": por_zona,
+        "por_sector": por_sector,
+        "top_lotes": ranking[:top],
+        "matriz_zona": matriz(por_zona),
+        "matriz_sector": matriz(por_sector),
+        "fertilizantes": fertilizantes,
+    }

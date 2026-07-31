@@ -9,7 +9,8 @@ const S = {
   empresaId: null, empresa: null, empresas: [],
   anio: null, campanas: [],
   zona: 'Todas', sector: 'Todos', rangoEdad: 'Todas',
-  zonas: [], sectores: [], rangos: [],
+  identificacion: '', uma: '',
+  zonas: [], sectores: [], rangos: [], umas: [], identificaciones: [],
   fertilizantes: [], nutrientes: [],
   tab: 'resumen', lotes: [], params: null,
 };
@@ -74,6 +75,16 @@ function esqueleto(cont) {
       <div class="g"><label for="fS">Sector</label><select id="fS"><option>Todos</option></select></div>
       <div class="g"><label for="fZ">Zona</label><select id="fZ"><option>Todas</option></select></div>
       <div class="g"><label for="fE">Edad</label><select id="fE"><option>Todas</option></select></div>
+      <div class="g"><label for="fU">UMA</label>
+        <select id="fU" style="min-width:90px"><option value="">Todas</option></select></div>
+      <div class="g"><label for="fI">Lote</label>
+        <input id="fI" list="fIList" placeholder="Buscar…" autocomplete="off"
+               value="${esc(S.identificacion)}"
+               style="min-width:210px;padding:8px 11px;border:1.5px solid var(--line);
+                      border-radius:var(--radius-sm);font-size:14px">
+        <datalist id="fIList"></datalist>
+        <button class="btn btn-ghost" id="fIx" title="Limpiar"
+                style="padding:8px 11px">✕</button></div>
       <div class="sp"></div>
       <button class="btn btn-ghost" id="fR">Actualizar</button>
     </div>
@@ -81,6 +92,7 @@ function esqueleto(cont) {
       <button class="ftab" data-tab="resumen">Resumen</button>
       <button class="ftab" data-tab="diagnostico">Diagnóstico</button>
       <button class="ftab" data-tab="balance">Índice de balance</button>
+      <button class="ftab" data-tab="aplicaciones">Aplicaciones</button>
       <button class="ftab" data-tab="plan">Plan y costos</button>
       <button class="ftab" data-tab="parametros">Parámetros</button>
       <button class="ftab" data-tab="datos">Cargar datos</button>
@@ -105,6 +117,22 @@ function esqueleto(cont) {
   $('#fS').onchange = e => { S.sector = e.target.value; S.zona = 'Todas'; cargar(); };
   $('#fZ').onchange = e => { S.zona = e.target.value; cargar(); };
   $('#fE').onchange = e => { S.rangoEdad = e.target.value; cargar(); };
+  $('#fU').onchange = e => { S.uma = e.target.value; cargar(); };
+
+  // El lote se busca escribiendo: espera a que dejes de teclear
+  let temporizador = null;
+  $('#fI').oninput = e => {
+    clearTimeout(temporizador);
+    const v = e.target.value;
+    temporizador = setTimeout(() => { S.identificacion = v; cargar(); }, 400);
+  };
+  $('#fI').onchange = e => {
+    clearTimeout(temporizador);
+    S.identificacion = e.target.value; cargar();
+  };
+  $('#fIx').onclick = () => {
+    $('#fI').value = ''; S.identificacion = ''; cargar();
+  };
   $('#fR').onclick = cargar;
   cont.querySelectorAll('.ftab').forEach(b =>
     b.onclick = () => { S.tab = b.dataset.tab; cargar(); });
@@ -120,13 +148,15 @@ async function cargar() {
   if (S.tab === 'datos') return vistaCarga(c);
   if (S.tab === 'resumen') return vistaResumen(c);
   if (S.tab === 'diagnostico') return vistaDiagnostico(c);
+  if (S.tab === 'aplicaciones') return vistaAplicaciones(c);
 
   c.innerHTML = `<div class="cargando">Cargando…</div>`;
   try {
-    const f = { empresaId: S.empresaId, zona: S.zona, sector: S.sector, rangoEdad: S.rangoEdad };
+    const f = filtrosActuales();
     const r = await API.lotes(S.anio, f);
     S.lotes = r.lotes || [];
     S.zonas = r.zonas || []; S.sectores = r.sectores || []; S.rangos = r.rangos_edad || [];
+    S.umas = r.umas || []; S.identificaciones = r.identificaciones || [];
     S.fertilizantes = r.fertilizantes || []; S.nutrientes = r.nutrientes || [];
     pintarFiltros();
   } catch (e) {
@@ -142,6 +172,13 @@ function vacio(c) {
     <p>Carga el Excel de esta empresa en la pestaña <strong>Cargar datos</strong>.</p></div>`;
 }
 
+function filtrosActuales() {
+  return {
+    empresaId: S.empresaId, zona: S.zona, sector: S.sector,
+    rangoEdad: S.rangoEdad, identificacion: S.identificacion, uma: S.uma,
+  };
+}
+
 function pintarFiltros() {
   const set = (sel, valores, actual) => {
     const el = $(sel);
@@ -151,6 +188,14 @@ function pintarFiltros() {
   set('#fS', ['Todos', ...S.sectores], S.sector);
   set('#fZ', ['Todas', ...S.zonas], S.zona);
   set('#fE', ['Todas', ...S.rangos], S.rangoEdad);
+
+  const u = $('#fU');
+  if (u) u.innerHTML = `<option value="">Todas</option>` + S.umas.map(v =>
+    `<option value="${v}" ${String(v) === String(S.uma) ? 'selected' : ''}>${v}</option>`).join('');
+
+  const dl = $('#fIList');
+  if (dl) dl.innerHTML = S.identificaciones.map(v =>
+    `<option value="${esc(v)}"></option>`).join('');
 }
 
 // ============================================================
@@ -307,11 +352,11 @@ async function vistaDiagnostico(c) {
   c.innerHTML = `<div class="cargando">Cargando análisis foliar…</div>`;
   let d;
   try {
-    d = await API.diagnostico(S.anio, { empresaId: S.empresaId, zona: S.zona,
-                                        sector: S.sector, rangoEdad: S.rangoEdad });
+    d = await API.diagnostico(S.anio, filtrosActuales());
   } catch (e) { c.innerHTML = `<div class="msg msg-err">${esc(e.message)}</div>`; return; }
 
   S.zonas = d.zonas || []; S.sectores = d.sectores || []; S.rangos = d.rangos_edad || [];
+  S.umas = d.umas || []; S.identificaciones = d.identificaciones || [];
   pintarFiltros();
 
   if (!d.lotes.length) return vacio(c);
@@ -368,6 +413,156 @@ async function vistaDiagnostico(c) {
             return `<td class="num">${v == null ? '—' : n2(v, v < 10 ? 3 : 1)}</td>`;
           }).join('')}
         </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+
+// ============================================================
+//  APLICACIONES · el plan en toneladas, no en dinero
+// ============================================================
+async function vistaAplicaciones(c) {
+  c.innerHTML = `<div class="cargando">Calculando aplicaciones…</div>`;
+  let d;
+  try { d = await API.aplicaciones(S.anio, filtrosActuales()); }
+  catch (e) { c.innerHTML = `<div class="msg msg-err">${esc(e.message)}</div>`; return; }
+
+  S.zonas = d.zonas || []; S.sectores = d.sectores || [];
+  S.rangos = d.rangos_edad || []; S.umas = d.umas || [];
+  S.identificaciones = d.identificaciones || [];
+  pintarFiltros();
+
+  if (d.vacio) return vacio(c);
+
+  const t = d.total;
+  const ferts = d.por_fertilizante;
+
+  c.innerHTML = `
+    <div class="kpis">
+      <div class="kpi"><div class="l">Total aplicado</div>
+        <div class="v">${n2(t.toneladas, 1)}</div><div class="s">toneladas</div></div>
+      <div class="kpi"><div class="l">Lotes</div><div class="v">${n0(t.lotes)}</div></div>
+      <div class="kpi"><div class="l">Palmas</div><div class="v">${n0(t.palmas)}</div></div>
+      <div class="kpi acc"><div class="l">Por palma</div>
+        <div class="v">${n2(t.kg_por_palma, 2)}</div><div class="s">kg de fertilizante</div></div>
+      ${t.hectareas ? `<div class="kpi"><div class="l">Por hectárea</div>
+        <div class="v">${n2(t.kg_por_hectarea, 0)}</div><div class="s">kg · ${n2(t.hectareas, 0)} ha</div></div>` : ''}
+      <div class="kpi"><div class="l">Cosecha esperada</div>
+        <div class="v">${n2(t.tons_esperada_prom, 1)}</div><div class="s">t promedio por lote</div></div>
+    </div>
+
+    <div class="card">
+      <h3>Toneladas por fertilizante</h3>
+      <p class="sub">Cuánto se aplica de cada producto y cuánto le toca a cada palma.</p>
+      ${barras(ferts.map(f => ({ etiqueta: f.nombre, valor: f.toneladas })), ' t')}
+      <div class="twrap" style="max-height:none;margin-top:16px">
+        <table class="ft">
+          <thead><tr><th>Fertilizante</th><th class="num">Toneladas</th>
+            <th class="num">% del plan</th><th class="num">kg/palma</th>
+            <th class="num">g/palma</th>
+            ${t.hectareas ? '<th class="num">kg/ha</th>' : ''}</tr></thead>
+          <tbody>${ferts.map(f => `<tr>
+            <td class="ln">${esc(f.nombre)}</td>
+            <td class="num">${n2(f.toneladas, 2)}</td>
+            <td class="num">${n2(f.porcentaje, 1)}%</td>
+            <td class="num">${n2(f.kg_por_palma, 3)}</td>
+            <td class="num">${n0(f.gramos_por_palma)}</td>
+            ${t.hectareas ? `<td class="num">${n2(f.kg_por_hectarea, 1)}</td>` : ''}
+          </tr>`).join('')}</tbody>
+          <tfoot><tr><td>Total</td><td class="num">${n2(t.toneladas, 2)}</td>
+            <td class="num">100%</td><td class="num">${n2(t.kg_por_palma, 3)}</td>
+            <td class="num">${n0(t.kg_por_palma * 1000)}</td>
+            ${t.hectareas ? `<td class="num">${n2(t.kg_por_hectarea, 1)}</td>` : ''}</tr></tfoot>
+        </table>
+      </div>
+    </div>
+
+    ${tablaGrupo('Aplicaciones por sector', d.por_sector, t)}
+    ${tablaGrupo('Aplicaciones por zona', d.por_zona, t)}
+
+    <div class="card">
+      <h3>Fertilizantes por sector</h3>
+      <p class="sub">Toneladas de cada producto en cada finca.</p>
+      ${matriz(d.matriz_sector)}
+    </div>
+
+    <div class="card">
+      <h3>Fertilizantes por zona</h3>
+      <p class="sub">Toneladas de cada producto en cada zona.</p>
+      ${matriz(d.matriz_zona)}
+    </div>
+
+    <div class="card">
+      <h3>Lotes que más fertilizante reciben</h3>
+      <p class="sub">Ordenados por toneladas totales. La columna kg/palma muestra
+        la intensidad real, que no depende del tamaño del lote.</p>
+      <div class="twrap" style="max-height:none">
+        <table class="ft">
+          <thead><tr><th>Lote</th><th class="num">UMA</th><th>Sector</th><th>Zona</th>
+            <th class="num">Palmas</th><th class="num">Toneladas</th>
+            <th class="num">kg/palma</th><th class="num">Cosecha esp.</th></tr></thead>
+          <tbody>${d.top_lotes.map(l => `<tr>
+            <td class="ln">${esc(l.identificacion)}</td>
+            <td class="num">${l.uma ?? '—'}</td>
+            <td>${esc(l.sector ?? '—')}</td>
+            <td>${esc(l.zona ?? '—')}</td>
+            <td class="num">${n0(l.palmas)}</td>
+            <td class="num">${n2(l.toneladas, 2)}</td>
+            <td class="num">${n2(l.kg_por_palma, 2)}</td>
+            <td class="num">${l.tons_esperada ? n2(l.tons_esperada, 0) : '—'}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function tablaGrupo(titulo, grupos, total) {
+  if (!grupos || !grupos.length) return '';
+  return `<div class="card">
+      <h3>${esc(titulo)}</h3>
+      <p class="sub">Toneladas aplicadas y promedio de cosecha esperada por lote.</p>
+      ${barras(grupos.map(g => ({ etiqueta: g.grupo, valor: g.toneladas })), ' t')}
+      <div class="twrap" style="max-height:none;margin-top:16px">
+        <table class="ft">
+          <thead><tr><th>Grupo</th><th class="num">Lotes</th><th class="num">Palmas</th>
+            <th class="num">Toneladas</th><th class="num">% del plan</th>
+            <th class="num">kg/palma</th>
+            <th class="num">Cosecha esp. prom.</th></tr></thead>
+          <tbody>${grupos.map(g => `<tr>
+            <td class="ln">${esc(g.grupo)}</td>
+            <td class="num">${n0(g.lotes)}</td>
+            <td class="num">${n0(g.palmas)}</td>
+            <td class="num">${n2(g.toneladas, 2)}</td>
+            <td class="num">${n2(g.toneladas / (total.toneladas || 1) * 100, 1)}%</td>
+            <td class="num">${n2(g.kg_por_palma, 2)}</td>
+            <td class="num">${n2(g.tons_esperada_prom, 1)} t</td>
+          </tr>`).join('')}</tbody>
+          <tfoot><tr><td>Total</td><td class="num">${n0(total.lotes)}</td>
+            <td class="num">${n0(total.palmas)}</td>
+            <td class="num">${n2(total.toneladas, 2)}</td><td class="num">100%</td>
+            <td class="num">${n2(total.kg_por_palma, 2)}</td>
+            <td class="num">${n2(total.tons_esperada_prom, 1)} t</td></tr></tfoot>
+        </table>
+      </div>
+    </div>`;
+}
+
+function matriz(m) {
+  if (!m || !m.grupos.length) return `<p style="color:var(--ink-soft);font-size:13px">Sin datos.</p>`;
+  return `<div class="twrap" style="max-height:none">
+      <table class="ft">
+        <thead><tr><th>Fertilizante</th>
+          ${m.grupos.map(g => `<th class="num">${esc(g)}</th>`).join('')}
+          <th class="num">Total</th></tr></thead>
+        <tbody>${m.filas.map(f => `<tr>
+          <td class="ln">${esc(f.fertilizante)}</td>
+          ${m.grupos.map(g => `<td class="num">${f.valores[g] ? n2(f.valores[g], 2) : '—'}</td>`).join('')}
+          <td class="num">${n2(f.total, 2)}</td>
+        </tr>`).join('')}</tbody>
+        <tfoot><tr><td>Total</td>
+          ${m.grupos.map(g => `<td class="num">${n2(m.totales[g], 2)}</td>`).join('')}
+          <td class="num">${n2(Object.values(m.totales).reduce((a, b) => a + b, 0), 2)}</td>
+        </tr></tfoot>
       </table>
     </div>`;
 }

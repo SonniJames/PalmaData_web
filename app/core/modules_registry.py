@@ -33,6 +33,7 @@ MODULOS = [
             {"id": "resumen",     "nombre": "Resumen"},
             {"id": "diagnostico", "nombre": "Diagnóstico"},
             {"id": "balance",     "nombre": "Índice de balance"},
+            {"id": "aplicaciones","nombre": "Aplicaciones"},
             {"id": "plan",        "nombre": "Plan y costos"},
             {"id": "parametros",  "nombre": "Parámetros"},
             {"id": "datos",       "nombre": "Cargar datos"},

@@ -10,7 +10,8 @@ from fastapi.responses import Response
 
 from ...core import db, security
 from . import repository as repo
-from .calc import comparar_campanas, consolidar, preparar_lote, resumen_nutricional
+from .calc import (aplicaciones, comparar_campanas, consolidar, preparar_lote,
+                   resumen_nutricional)
 from .excel_loader import generar_formato, leer_excel
 from .formato import HOJAS_DATOS, ordenar_nutrientes
 from .params import (CAMPOS, ETIQUETAS, asegurar_precios, flete_de,
@@ -51,9 +52,11 @@ def _empresa(empresa_id: int | None) -> int:
     return e["id"]
 
 
-def _cargar(empresa_id: int, anio: int, zona=None, sector=None, rango_edad=None):
+def _cargar(empresa_id: int, anio: int, zona=None, sector=None,
+            rango_edad=None, identificacion=None, uma=None):
     """Devuelve (lotes preparados, params, fertilizantes)."""
-    filas = repo.listar_lotes(empresa_id, anio, zona, sector, rango_edad)
+    filas = repo.listar_lotes(empresa_id, anio, zona, sector, rango_edad,
+                              identificacion, uma)
     params = repo.parametros_o_default(empresa_id, anio)
     lotes = [preparar_lote({k: _limpiar(v) for k, v in f.items()}, params)
              for f in filas]
@@ -255,9 +258,12 @@ async def post_carga(
 @router.get("/lotes")
 def get_lotes(anio: int = Query(...), empresa_id: int | None = Query(None),
               zona: str | None = Query(None), sector: str | None = Query(None),
-              rango_edad: str | None = Query(None), _=Depends(sesion)):
+              rango_edad: str | None = Query(None),
+              identificacion: str | None = Query(None),
+              uma: int | None = Query(None), _=Depends(sesion)):
     eid = _empresa(empresa_id)
-    lotes, _p, ferts = _cargar(eid, anio, zona, sector, rango_edad)
+    lotes, _p, ferts = _cargar(eid, anio, zona, sector, rango_edad,
+                               identificacion, uma)
     nutrientes = ordenar_nutrientes(
         {k for l in lotes for k in (l.get("balance") or {})})
     return {"ok": True, "anio": anio, "empresa_id": eid,
@@ -270,10 +276,13 @@ def get_lotes(anio: int = Query(...), empresa_id: int | None = Query(None),
 def get_diagnostico(anio: int = Query(...), empresa_id: int | None = Query(None),
                     zona: str | None = Query(None),
                     sector: str | None = Query(None),
-                    rango_edad: str | None = Query(None), _=Depends(sesion)):
+                    rango_edad: str | None = Query(None),
+                    identificacion: str | None = Query(None),
+                    uma: int | None = Query(None), _=Depends(sesion)):
     """Análisis foliar del laboratorio, por lote y nutriente."""
     eid = _empresa(empresa_id)
-    lotes, _p, _f = _cargar(eid, anio, zona, sector, rango_edad)
+    lotes, _p, _f = _cargar(eid, anio, zona, sector, rango_edad,
+                            identificacion, uma)
     nutrientes = ordenar_nutrientes(
         {k for l in lotes for k in (l.get("foliar") or {})})
     salida = [{"id": l["id"], "identificacion": l["identificacion"],
@@ -373,6 +382,33 @@ def get_dashboard(anio: int = Query(...), empresa_id: int | None = Query(None),
                        "costo": l["costos"]["costo_total"]} for l in top],
         "sin_precio": [f for f in ferts if not precios.get(f)],
     }
+
+
+@router.get("/aplicaciones")
+def get_aplicaciones(anio: int = Query(...),
+                     empresa_id: int | None = Query(None),
+                     zona: str | None = Query(None),
+                     sector: str | None = Query(None),
+                     rango_edad: str | None = Query(None),
+                     identificacion: str | None = Query(None),
+                     uma: int | None = Query(None),
+                     top: int = Query(15, ge=5, le=50),
+                     _=Depends(sesion)):
+    """
+    Análisis del plan en TONELADAS (no en costos):
+    por fertilizante, por zona, por sector, lotes que más reciben,
+    y las matrices fertilizante × zona y fertilizante × sector.
+    """
+    eid = _empresa(empresa_id)
+    lotes, _p, ferts = _cargar(eid, anio, zona, sector, rango_edad,
+                               identificacion, uma)
+    if not lotes:
+        return {"ok": True, "anio": anio, "empresa_id": eid, "vacio": True,
+                **repo.filtros_de_campana(eid, anio)}
+
+    return {"ok": True, "anio": anio, "empresa_id": eid, "vacio": False,
+            **aplicaciones(lotes, ferts, top),
+            **repo.filtros_de_campana(eid, anio)}
 
 
 @router.get("/comparativo")
