@@ -439,7 +439,7 @@ async function vistaAplicaciones(c) {
 
   c.innerHTML = `
     <div class="kpis">
-      <div class="kpi"><div class="l">Total aplicado</div>
+      <div class="kpi"><div class="l">Total programado</div>
         <div class="v">${n2(t.toneladas, 1)}</div><div class="s">toneladas</div></div>
       <div class="kpi"><div class="l">Lotes</div><div class="v">${n0(t.lotes)}</div></div>
       <div class="kpi"><div class="l">Palmas</div><div class="v">${n0(t.palmas)}</div></div>
@@ -477,8 +477,8 @@ async function vistaAplicaciones(c) {
       </div>
     </div>
 
-    ${tablaGrupo('Aplicaciones por sector', d.por_sector, t)}
-    ${tablaGrupo('Aplicaciones por zona', d.por_zona, t)}
+    ${tablaGrupo('Programado por sector', d.por_sector, t)}
+    ${tablaGrupo('Programado por zona', d.por_zona, t)}
 
     <div class="card">
       <h3>Fertilizantes por sector</h3>
@@ -520,7 +520,7 @@ function tablaGrupo(titulo, grupos, total) {
   if (!grupos || !grupos.length) return '';
   return `<div class="card">
       <h3>${esc(titulo)}</h3>
-      <p class="sub">Toneladas aplicadas y promedio de cosecha esperada por lote.</p>
+      <p class="sub">Toneladas programadas y promedio de cosecha esperada por lote.</p>
       ${barras(grupos.map(g => ({ etiqueta: g.grupo, valor: g.toneladas })), ' t')}
       <div class="twrap" style="max-height:none;margin-top:16px">
         <table class="ft">
