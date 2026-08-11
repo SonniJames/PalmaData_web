@@ -42,6 +42,7 @@ app.include_router(auth_router)
 #   app/modules/<id>/router.py  con una variable `router`
 MODULOS_BACKEND = [
     "fertilizacion",
+    "asistencia",
 ]
 
 ESTADO_MODULOS: dict[str, dict] = {}

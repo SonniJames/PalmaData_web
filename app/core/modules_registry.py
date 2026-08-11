@@ -39,6 +39,17 @@ MODULOS = [
             {"id": "datos",       "nombre": "Cargar datos"},
         ],
     },
+    {
+        "id": "asistencia",
+        "nombre": "Asistencia",
+        "icono": "clock",
+        "activo": True,
+        "submodulos": [
+            {"id": "analisis", "nombre": "Análisis"},
+            {"id": "revisar",  "nombre": "Días a revisar"},
+            {"id": "datos",    "nombre": "Cargar datos"},
+        ],
+    },
     # --- Futuros módulos (desactivados hasta que se construyan) ---
     {
         "id": "produccion",
