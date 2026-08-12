@@ -17,6 +17,9 @@ async function pedir(url, opciones = {}) {
 export const API = {
   empresas: () => pedir(`${BASE}/empresas`),
 
+  zonas: (empresaId) =>
+    pedir(`${BASE}/zonas${empresaId ? `?empresa_id=${empresaId}` : ''}`),
+
   periodos: (empresaId) =>
     pedir(`${BASE}/periodos${empresaId ? `?empresa_id=${empresaId}` : ''}`),
 
@@ -28,9 +31,10 @@ export const API = {
     return pedir(`${BASE}/filtros?${q}`);
   },
 
-  analisis: ({ empresaId, anio, mes, dia, trabajador } = {}) => {
+  analisis: ({ empresaId, zonaId, anio, mes, dia, trabajador } = {}) => {
     const q = new URLSearchParams();
     if (empresaId) q.append('empresa_id', empresaId);
+    if (zonaId) q.append('zona_id', zonaId);
     if (anio) q.append('anio', anio);
     if (mes) q.append('mes', mes);
     if (dia) q.append('dia', dia);
@@ -45,23 +49,25 @@ export const API = {
     return pedir(`${BASE}/trabajadores/${id}?${q}`);
   },
 
-  urlFormato: (empresaId, anio, mes) => {
-    const q = new URLSearchParams({ anio, mes });
+  urlFormato: (empresaId, zonaId, anio, mes, formato = 1) => {
+    const q = new URLSearchParams({ anio, mes, zona_id: zonaId, formato });
     if (empresaId) q.append('empresa_id', empresaId);
     return `${BASE}/formato?${q}`;
   },
 
-  cargar: (anio, mes, empresaId, archivo, reemplazar = true) => {
+  cargar: (anio, mes, empresaId, zonaId, formato, archivo, reemplazar = true) => {
     const fd = new FormData();
     fd.append('anio', anio);
     fd.append('mes', mes);
     fd.append('empresa_id', empresaId);
+    fd.append('zona_id', zonaId);
+    fd.append('formato', formato);
     fd.append('archivo', archivo);
     fd.append('reemplazar', reemplazar);
     return pedir(`${BASE}/carga`, { method: 'POST', body: fd });
   },
 
-  borrarPeriodo: (anio, mes, empresaId) =>
-    pedir(`${BASE}/periodos/${anio}/${mes}?empresa_id=${empresaId}`,
+  borrarPeriodo: (anio, mes, empresaId, zonaId) =>
+    pedir(`${BASE}/periodos/${anio}/${mes}?empresa_id=${empresaId}&zona_id=${zonaId}`,
           { method: 'DELETE' }),
 };

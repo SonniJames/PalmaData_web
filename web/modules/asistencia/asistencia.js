@@ -7,6 +7,7 @@ import { API } from './api.js';
 
 const S = {
   empresaId: null, empresa: null, empresas: [],
+  zonaId: '', zona: null, zonas: [],
   anio: '', mes: '', dia: '', trabajador: '',
   anios: [], meses: [], dias: [],
   tab: 'analisis', datos: null,
@@ -51,6 +52,8 @@ function esqueleto(cont) {
       <div class="g"><label for="aEm">Empresa</label>
         <select id="aEm" style="min-width:170px">${S.empresas.map(e =>
           `<option value="${e.id}" ${e.id === S.empresaId ? 'selected' : ''}>${esc(e.nombre)}</option>`).join('')}</select></div>
+      <div class="g"><label for="aZo">Zona</label>
+        <select id="aZo" style="min-width:150px"><option value="">Todas</option></select></div>
       <div class="g"><label for="aAn">Año</label>
         <select id="aAn" style="min-width:110px"><option value="">Todos</option></select></div>
       <div class="g"><label for="aMe">Mes</label>
@@ -74,9 +77,10 @@ function esqueleto(cont) {
 
   $('#aEm').onchange = e => {
     S.empresaId = +e.target.value;
-    S.anio = ''; S.mes = ''; S.dia = '';
+    S.zonaId = ''; S.anio = ''; S.mes = ''; S.dia = '';
     cargar();
   };
+  $('#aZo').onchange = e => { S.zonaId = e.target.value; S.anio = ''; S.mes = ''; S.dia = ''; cargar(); };
   $('#aAn').onchange = e => { S.anio = e.target.value; S.mes = ''; S.dia = ''; cargar(); };
   $('#aMe').onchange = e => { S.mes = e.target.value; S.dia = ''; cargar(); };
   $('#aDi').onchange = e => { S.dia = e.target.value; cargar(); };
@@ -105,9 +109,11 @@ async function cargar() {
   c.innerHTML = `<div class="cargando">Calculando…</div>`;
   try {
     S.datos = await API.analisis({
-      empresaId: S.empresaId, anio: S.anio, mes: S.mes,
+      empresaId: S.empresaId, zonaId: S.zonaId, anio: S.anio, mes: S.mes,
       dia: S.dia, trabajador: S.trabajador,
     });
+    S.zonas = S.datos.zonas || [];
+    S.zona = S.datos.zona;
     S.anios = S.datos.anios || [];
     S.meses = S.datos.meses || [];
     S.dias = S.datos.dias || [];
@@ -132,6 +138,10 @@ async function cargar() {
 }
 
 function pintarFiltros() {
+  const zo = $('#aZo');
+  if (zo) zo.innerHTML = `<option value="">Todas</option>` + S.zonas.map(z =>
+    `<option value="${z.id}" ${String(z.id) === String(S.zonaId) ? 'selected' : ''}>${esc(z.nombre)}</option>`).join('');
+
   const an = $('#aAn');
   if (an) an.innerHTML = `<option value="">Todos</option>` + S.anios.map(a =>
     `<option value="${a}" ${String(a) === String(S.anio) ? 'selected' : ''}>${a}</option>`).join('');
@@ -146,10 +156,11 @@ function pintarFiltros() {
 }
 
 function periodoTexto() {
-  if (S.dia && S.mes && S.anio) return `${S.dia} de ${MESES[+S.mes - 1]} de ${S.anio}`;
-  if (S.mes && S.anio) return `${cap(MESES[+S.mes - 1])} de ${S.anio}`;
-  if (S.anio) return `Año ${S.anio}`;
-  return 'Todo el histórico';
+  const z = S.zona ? `${S.zona} · ` : '';
+  if (S.dia && S.mes && S.anio) return `${z}${S.dia} de ${MESES[+S.mes - 1]} de ${S.anio}`;
+  if (S.mes && S.anio) return `${z}${cap(MESES[+S.mes - 1])} de ${S.anio}`;
+  if (S.anio) return `${z}Año ${S.anio}`;
+  return z ? `${S.zona} · todo el histórico` : 'Todo el histórico';
 }
 
 // ============================================================
@@ -170,8 +181,8 @@ function vistaAnalisis(c) {
       <div class="kpi acc"><div class="l">${unDia ? 'Jornada' : 'Jornada promedio'}</div>
         <div class="v">${t.duracion || '—'}</div>
         <div class="s">${n2(t.horas_promedio, 2)} horas</div></div>
-      <div class="kpi"><div class="l">Registros</div><div class="v">${n0(t.dias_registrados)}</div>
-        <div class="s">${n0(t.dias_calculables)} con jornada · ${n0(t.dias_incompletos)} a revisar</div></div>
+      <div class="kpi"><div class="l">Días con registro</div><div class="v">${n0(t.dias_registrados)}</div>
+        <div class="s">${n0(t.dias_calculables)} calculables</div></div>
       ${t.dias_incompletos ? `<div class="kpi"><div class="l">A revisar</div>
         <div class="v" style="color:var(--danger)">${n0(t.dias_incompletos)}</div>
         <div class="s">marcación incompleta</div></div>` : ''}
@@ -310,14 +321,13 @@ function vistaRevisar(c) {
 
   c.innerHTML = `
     <div class="kpis">
-      <div class="kpi"><div class="l">Registros a revisar</div>
+      <div class="kpi"><div class="l">Días a revisar</div>
         <div class="v" style="color:var(--danger)">${n0(d.total_revisar)}</div>
         <div class="s">${esc(periodoTexto())}</div></div>
-      <div class="kpi"><div class="l">Con jornada calculable</div>
+      <div class="kpi"><div class="l">Días calculables</div>
         <div class="v">${n0(d.total.dias_calculables)}</div></div>
-      <div class="kpi"><div class="l">Total de registros</div>
-        <div class="v">${n0(d.total.dias_registrados)}</div>
-        <div class="s">trabajador × día</div></div>
+      <div class="kpi"><div class="l">Total con registro</div>
+        <div class="v">${n0(d.total.dias_registrados)}</div></div>
     </div>
 
     <div class="card" style="padding:14px 18px">
@@ -367,6 +377,16 @@ function vistaCarga(c) {
         <div class="g"><label for="cEm">Empresa</label>
           <select id="cEm" style="min-width:180px">${S.empresas.map(e =>
             `<option value="${e.id}" ${e.id === S.empresaId ? 'selected' : ''}>${esc(e.nombre)}</option>`).join('')}</select></div>
+        <div class="g"><label for="cZo">Zona</label>
+          <select id="cZo" style="min-width:160px">
+            <option value="">— Seleccionar —</option></select></div>
+        <div class="g"><label for="cFo">Formato</label>
+          <select id="cFo" style="min-width:150px">
+            <option value="1">Formato 1 · matriz</option>
+            <option value="2">Formato 2 · lista</option>
+          </select></div>
+      </div>
+      <div class="fbar" style="margin-bottom:10px">
         <div class="g"><label for="cAn">Año</label>
           <input type="number" id="cAn" min="1990" max="2100" step="1"
                  value="${anioActual}" style="width:110px"></div>
@@ -375,16 +395,19 @@ function vistaCarga(c) {
             <option value="">— Seleccionar —</option>
             ${MESES.map((m, i) => `<option value="${i + 1}">${cap(m)}</option>`).join('')}
           </select></div>
+        <div class="sp"></div>
+        <span style="font-size:12.5px;color:var(--ink-soft)">
+          Cada zona tiene su propio huellero y se carga por separado.</span>
       </div>
 
       <div id="cPer"></div>
 
       <div class="fbar" style="margin-bottom:16px">
         <div class="g"><label style="display:flex;align-items:center;gap:7px;cursor:pointer">
-          <input type="checkbox" id="cRe" checked> Reemplazar los datos de esa empresa, año y mes</label></div>
+          <input type="checkbox" id="cRe" checked> Reemplazar los datos de esa empresa, zona, año y mes</label></div>
         <div class="sp"></div>
         <span style="font-size:12.5px;color:var(--ink-soft)">
-          Si te equivocaste de archivo, súbelo de nuevo y se reemplaza.</span>
+          Solo se reemplaza esa zona: las demás no se tocan.</span>
       </div>
 
       <div class="dz" id="cZ">
@@ -393,7 +416,7 @@ function vistaCarga(c) {
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5-5 5 5"/>
           <path d="M12 5v12"/></svg></div>
         <div class="m">Arrastra el archivo aquí o haz clic para elegirlo</div>
-        <div class="s">.xlsx con las columnas Employee ID, Name y un día por columna</div>
+        <div class="s" id="cHint">.xlsx con las columnas Employee ID, Name y un día por columna</div>
         <input type="file" id="cF" accept=".xlsx,.xlsm" hidden>
       </div>
       <div id="cCh"></div>
@@ -404,7 +427,26 @@ function vistaCarga(c) {
     </div>
 
     <div class="card">
-      <h3>Cómo se leen las marcaciones</h3>
+      <h3>Los dos formatos</h3>
+      <p class="sub">Los huelleros no son todos de la misma marca, así que exportan
+        distinto. Elige arriba el que corresponda al aparato de esa zona.</p>
+      <div class="twrap" style="max-height:none;margin-bottom:18px">
+        <table class="ft">
+          <thead><tr><th>Formato</th><th>Estructura</th><th>Columnas</th></tr></thead>
+          <tbody>
+            <tr><td class="ln">1 · matriz</td>
+              <td>Una fila por trabajador, una columna por día del mes</td>
+              <td>Employee ID · Name · 1 · 2 · 3 …</td></tr>
+            <tr><td class="ln">2 · lista</td>
+              <td>Una fila por trabajador y fecha, con las horas separadas</td>
+              <td>ID · Nombre · Departamento · Fecha · Entrada · Salida</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="sub">En el <strong>formato 2</strong> las horas ya vienen separadas:
+        si falta la entrada o la salida, el día va a revisar. Solo se cargan las filas
+        cuya fecha esté dentro del mes elegido.</p>
+      <h3 style="margin-top:22px">Formato 1 · cómo se leen las marcaciones</h3>
       <p class="sub">El huellero registra cada paso por el lector, y suele repetir
         la misma marca varias veces. El sistema toma la <strong>primera</strong> y la
         <strong>última hora distintas</strong> del día.</p>
@@ -434,12 +476,42 @@ function vistaCarga(c) {
 
   const z = $('#cZ'), inp = $('#cF'), btn = $('#cS');
   let archivo = null;
+  let zonasCarga = [];
+
+  const pintarZonas = async () => {
+    const eid = +$('#cEm').value;
+    try {
+      zonasCarga = (await API.zonas(eid)).zonas || [];
+    } catch { zonasCarga = []; }
+    const sel = $('#cZo');
+    sel.innerHTML = zonasCarga.length
+      ? `<option value="">— Seleccionar —</option>` + zonasCarga.map(x =>
+          `<option value="${x.id}">${esc(x.nombre)}</option>`).join('')
+      : `<option value="">Sin zonas registradas</option>`;
+    refrescarPeriodo();
+  };
 
   const refrescarPeriodo = () => {
     const eid = +$('#cEm').value;
+    const zid = $('#cZo').value;
+    const fmt = +$('#cFo').value;
     const anio = +$('#cAn').value;
     const mes = $('#cMe').value;
     const caja = $('#cPer');
+
+    const hint = $('#cHint');
+    if (hint) hint.textContent = fmt === 2
+      ? '.xlsx con las columnas ID, Nombre, Departamento, Fecha, Entrada, Salida'
+      : '.xlsx con las columnas Employee ID, Name y un día por columna';
+
+    if (!zid) {
+      caja.innerHTML = `<div class="msg msg-warn" style="margin:0 0 16px">
+        <strong>Selecciona la zona.</strong> Cada zona tiene su propio huellero,
+        y el archivo que cargues reemplaza solo los datos de esa zona.
+      </div>`;
+      btn.disabled = true;
+      return;
+    }
 
     if (!mes || !anio) {
       caja.innerHTML = `<div class="msg msg-warn" style="margin:0 0 16px">
@@ -451,20 +523,24 @@ function vistaCarga(c) {
     }
 
     const dias = new Date(anio, +mes, 0).getDate();
+    const nz = (zonasCarga.find(x => String(x.id) === String(zid)) || {}).nombre || '';
     caja.innerHTML = `<div class="msg msg-ok" style="margin:0 0 16px">
-        Período: <strong>${cap(MESES[+mes - 1])} de ${anio}</strong> · ${dias} días.
+        <strong>${esc(nz)}</strong> · ${cap(MESES[+mes - 1])} de ${anio} ·
+        ${dias} días · Formato ${fmt}.
         <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">
-          <a class="btn btn-ghost" href="${API.urlFormato(eid, anio, mes)}" download>
-            Descargar formato de ${dias} días</a>
+          <a class="btn btn-ghost" href="${API.urlFormato(eid, zid, anio, mes, fmt)}" download>
+            Descargar formato ${fmt}${fmt === 1 ? ` de ${dias} días` : ''}</a>
         </div>
       </div>`;
     btn.disabled = !archivo;
   };
 
-  $('#cEm').onchange = refrescarPeriodo;
+  $('#cEm').onchange = pintarZonas;
+  $('#cZo').onchange = refrescarPeriodo;
+  $('#cFo').onchange = refrescarPeriodo;
   $('#cAn').oninput = refrescarPeriodo;
   $('#cMe').onchange = refrescarPeriodo;
-  refrescarPeriodo();
+  pintarZonas();
 
   const elegir = f => {
     if (!f) return;
@@ -483,29 +559,39 @@ function vistaCarga(c) {
   z.addEventListener('drop', e => elegir(e.dataTransfer.files[0]));
 
   btn.onclick = async () => {
-    const eid = +$('#cEm').value, anio = +$('#cAn').value, mes = +$('#cMe').value;
+    const eid = +$('#cEm').value, zid = $('#cZo').value;
+    const fmt = +$('#cFo').value;
+    const anio = +$('#cAn').value, mes = +$('#cMe').value;
     const m = $('#cM');
+    if (!zid) {
+      m.innerHTML = `<div class="msg msg-err">Selecciona la zona antes de cargar.</div>`;
+      return;
+    }
     if (!mes) {
       m.innerHTML = `<div class="msg msg-err">Selecciona el mes antes de cargar.</div>`;
       return;
     }
     const nom = (S.empresas.find(x => x.id === eid) || {}).nombre || '';
-    if (!confirm(`Vas a cargar este archivo como «${nom}» · ${cap(MESES[mes - 1])} ${anio}.\n\n¿Es correcto?`)) return;
+    const nz = (zonasCarga.find(x => String(x.id) === String(zid)) || {}).nombre || '';
+    if (!confirm(`Vas a cargar este archivo como:\n\n` +
+                 `Empresa: ${nom}\nZona: ${nz}\n` +
+                 `Período: ${cap(MESES[mes - 1])} ${anio}\nFormato: ${fmt}\n\n¿Es correcto?`)) return;
 
     btn.disabled = true; btn.textContent = 'Cargando…'; m.innerHTML = '';
     try {
-      const r = await API.cargar(anio, mes, eid, archivo, $('#cRe').checked);
+      const r = await API.cargar(anio, mes, eid, zid, fmt, archivo, $('#cRe').checked);
       const av = (r.advertencias || []).length
         ? `<ul>${r.advertencias.map(a => `<li>${esc(a)}</li>`).join('')}</ul>` : '';
       const res = r.resumen || {};
       m.innerHTML = `<div class="msg ${av ? 'msg-warn' : 'msg-ok'}">
-        <strong>${esc(r.empresa)}</strong> · ${cap(r.mes_nombre)} ${r.anio} ·
-        ${r.dias_mes} días.<br>
+        <strong>${esc(r.empresa)} · ${esc(r.zona)}</strong> ·
+        ${cap(r.mes_nombre)} ${r.anio} · formato ${r.formato}.<br>
         ${r.trabajadores} trabajadores · ${r.marcaciones} días con registro
         (${res.dias_completos || 0} calculables, ${res.dias_incompletos || 0} a revisar)
         ${r.reemplazadas ? ` · ${r.reemplazadas} registros reemplazados` : ''}.
         ${av}</div>`;
-      S.empresaId = eid; S.anio = String(anio); S.mes = String(mes); S.dia = '';
+      S.empresaId = eid; S.zonaId = String(zid);
+      S.anio = String(anio); S.mes = String(mes); S.dia = '';
       $('#aEm').value = eid;
     } catch (e) {
       m.innerHTML = `<div class="msg msg-err">${esc(e.message)}</div>`;
