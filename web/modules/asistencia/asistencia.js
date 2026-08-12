@@ -181,8 +181,8 @@ function vistaAnalisis(c) {
       <div class="kpi acc"><div class="l">${unDia ? 'Jornada' : 'Jornada promedio'}</div>
         <div class="v">${t.duracion || '—'}</div>
         <div class="s">${n2(t.horas_promedio, 2)} horas</div></div>
-      <div class="kpi"><div class="l">Días con registro</div><div class="v">${n0(t.dias_registrados)}</div>
-        <div class="s">${n0(t.dias_calculables)} calculables</div></div>
+      <div class="kpi"><div class="l">Registros</div><div class="v">${n0(t.dias_registrados)}</div>
+        <div class="s">${n0(t.dias_calculables)} con jornada · ${n0(t.dias_incompletos)} a revisar</div></div>
       ${t.dias_incompletos ? `<div class="kpi"><div class="l">A revisar</div>
         <div class="v" style="color:var(--danger)">${n0(t.dias_incompletos)}</div>
         <div class="s">marcación incompleta</div></div>` : ''}
@@ -321,13 +321,14 @@ function vistaRevisar(c) {
 
   c.innerHTML = `
     <div class="kpis">
-      <div class="kpi"><div class="l">Días a revisar</div>
+      <div class="kpi"><div class="l">Registros a revisar</div>
         <div class="v" style="color:var(--danger)">${n0(d.total_revisar)}</div>
         <div class="s">${esc(periodoTexto())}</div></div>
-      <div class="kpi"><div class="l">Días calculables</div>
+      <div class="kpi"><div class="l">Con jornada calculable</div>
         <div class="v">${n0(d.total.dias_calculables)}</div></div>
-      <div class="kpi"><div class="l">Total con registro</div>
-        <div class="v">${n0(d.total.dias_registrados)}</div></div>
+      <div class="kpi"><div class="l">Total de registros</div>
+        <div class="v">${n0(d.total.dias_registrados)}</div>
+        <div class="s">trabajador × día</div></div>>
     </div>
 
     <div class="card" style="padding:14px 18px">
