@@ -3,7 +3,10 @@ PalmaData · Asistencia · Carga del Excel del huellero
 =====================================================
 El archivo viene con una fila por trabajador y una columna por día:
 
-    Employee ID | Name | 1 | 2 | 3 | ... | 31
+    Employee ID | Name | Department | 1 | 2 | 3 | ... | 31
+
+La columna Department es el SUPERVISOR a cargo del trabajador.
+Se guarda en cada marcación, así el análisis puede comparar equipos.
 
 Cada celda de día trae las marcas del huellero separadas por saltos
 de línea. El huellero suele repetir la misma marca varias veces:
@@ -170,7 +173,7 @@ def leer_excel(contenido: bytes, anio: int, mes: int) -> tuple[dict, list[str]]:
 
     # --- Cabecera: ubicar código, nombre y las columnas de día ---
     cabecera = filas[0]
-    col_codigo = col_nombre = None
+    col_codigo = col_nombre = col_depto = None
     cols_dia: dict[int, int] = {}          # índice de columna -> día
 
     for i, valor in enumerate(cabecera):
@@ -179,6 +182,9 @@ def leer_excel(contenido: bytes, anio: int, mes: int) -> tuple[dict, list[str]]:
             col_codigo = i
         elif etiqueta in ("name", "nombre", "empleado", "trabajador"):
             col_nombre = i
+        elif etiqueta in ("department", "departamento", "supervisor",
+                          "area", "grupo", "cuadrilla"):
+            col_depto = i
         else:
             texto = _txt(valor)
             if texto and texto.isdigit():
@@ -214,6 +220,7 @@ def leer_excel(contenido: bytes, anio: int, mes: int) -> tuple[dict, list[str]]:
 
         codigo = _txt(fila[col_codigo]) if col_codigo is not None and col_codigo < len(fila) else None
         nombre = _txt(fila[col_nombre]) if col_nombre is not None and col_nombre < len(fila) else None
+        depto = _txt(fila[col_depto]) if col_depto is not None and col_depto < len(fila) else None
 
         if not codigo and not nombre:
             continue
@@ -255,6 +262,7 @@ def leer_excel(contenido: bytes, anio: int, mes: int) -> tuple[dict, list[str]]:
                 "estado": j["estado"],
                 "n_marcas": j["n_marcas"],
                 "marcas": [t.strftime("%H:%M:%S") for t in marcas],
+                "departamento": depto,
             })
 
         trabajadores.append({"codigo": codigo, "nombre": nombre,
@@ -262,6 +270,12 @@ def leer_excel(contenido: bytes, anio: int, mes: int) -> tuple[dict, list[str]]:
 
     if not trabajadores:
         return {}, ["No se encontró ningún trabajador en el archivo."]
+
+    if col_depto is None:
+        advertencias.append(
+            "El archivo no trae la columna «Department» (el supervisor). "
+            "Los datos se cargan igual, pero el análisis por supervisor "
+            "quedará vacío. Descarga el formato actualizado para incluirla.")
 
     if n_incompletas:
         advertencias.append(
@@ -300,9 +314,10 @@ def generar_formato(anio: int, mes: int,
     # ---------- Hoja de datos ----------
     ws = wb.active
     ws.title = HOJA_DATOS
-    ws.append(["Employee ID", "Name"] + [str(d) for d in range(1, total + 1)])
+    ws.append(["Employee ID", "Name", "Department"]
+              + [str(d) for d in range(1, total + 1)])
     for p in personas:
-        ws.append([p.get("codigo"), p.get("nombre")])
+        ws.append([p.get("codigo"), p.get("nombre"), p.get("departamento")])
 
     relleno = PatternFill("solid", fgColor=VERDE)
     for celda in ws[1]:
@@ -312,16 +327,17 @@ def generar_formato(anio: int, mes: int,
     ws.row_dimensions[1].height = 24
     ws.column_dimensions["A"].width = 13
     ws.column_dimensions["B"].width = 34
+    ws.column_dimensions["C"].width = 22
     for d in range(total):
-        ws.column_dimensions[get_column_letter(3 + d)].width = 11
+        ws.column_dimensions[get_column_letter(4 + d)].width = 11
 
     # Las celdas de día llevan varias horas: se ven mejor con ajuste
     for fila in range(2, max(2, len(personas) + 1) + 1):
-        for col in range(3, total + 3):
+        for col in range(4, total + 4):
             ws.cell(row=fila, column=col).alignment = Alignment(
                 wrap_text=True, vertical="top", horizontal="center")
 
-    ws.freeze_panes = "C2"
+    ws.freeze_panes = "D2"
 
     # ---------- Instrucciones ----------
     guia = wb.create_sheet("instrucciones")
@@ -341,7 +357,12 @@ def generar_formato(anio: int, mes: int,
         ("Estructura", "sub"),
         ("· Columna A: Employee ID (el código del huellero).", ""),
         ("· Columna B: Name (el nombre del trabajador).", ""),
-        ("· De la columna C en adelante: un día del mes cada una.", ""),
+        ("· Columna C: Department (el supervisor a cargo).", ""),
+        ("· De la columna D en adelante: un día del mes cada una.", ""),
+        ("", ""),
+        ("La columna Department es el supervisor de cada trabajador.", ""),
+        ("Con ella el módulo compara equipos: qué supervisor tiene las", ""),
+        ("jornadas más largas, cuál las más cortas y cuánta gente lleva.", ""),
         ("", ""),
         ("Las marcaciones", "sub"),
         ("Cada celda de día lleva las marcas de esa persona ese día,", ""),

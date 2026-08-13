@@ -105,8 +105,12 @@ def analizar(filas: list[dict], top: int = 10) -> dict:
             "codigo": f.get("codigo"),
             "nombre": f.get("nombre"),
             "empresa": f.get("empresa"),
+            "zona": f.get("zona"),
+            "departamento": None,
             "marcaciones": [],
         })
+        if f.get("departamento"):
+            p["departamento"] = f["departamento"]   # el último visto manda
         p["marcaciones"].append(f)
 
     trabajadores = []
@@ -115,7 +119,8 @@ def analizar(filas: list[dict], top: int = 10) -> dict:
         trabajadores.append({
             "trabajador_id": p["trabajador_id"],
             "codigo": p["codigo"], "nombre": p["nombre"],
-            "empresa": p["empresa"], **r,
+            "empresa": p["empresa"], "zona": p["zona"],
+            "departamento": p["departamento"], **r,
         })
     trabajadores.sort(key=lambda x: (x["nombre"] or "").lower())
 
@@ -180,6 +185,7 @@ def analizar(filas: list[dict], top: int = 10) -> dict:
     revisar = [{
         "trabajador_id": f.get("trabajador_id"),
         "codigo": f.get("codigo"), "nombre": f.get("nombre"),
+        "departamento": f.get("departamento"), "zona": f.get("zona"),
         "fecha": str(f.get("fecha")), "dia": f.get("dia"),
         "entrada": f["entrada"].strftime("%H:%M") if f.get("entrada") else None,
         "salida": f["salida"].strftime("%H:%M") if f.get("salida") else None,
@@ -189,10 +195,45 @@ def analizar(filas: list[dict], top: int = 10) -> dict:
     } for f in incompletos]
     revisar.sort(key=lambda x: (x["fecha"], x["nombre"] or ""))
 
+    # --- Por supervisor (columna Department del huellero) ---
+    # Se agrupan las marcaciones, no los trabajadores, porque alguien
+    # puede cambiar de supervisor dentro del período.
+    equipos: dict = {}
+    for f in filas:
+        clave = f.get("departamento") or "Sin asignar"
+        g = equipos.setdefault(clave, {
+            "departamento": clave, "marcaciones": [], "personas": set()})
+        g["marcaciones"].append(f)
+        g["personas"].add(f.get("trabajador_id"))
+
+    supervisores = []
+    for g in equipos.values():
+        r = resumen_trabajador(g["marcaciones"])
+        supervisores.append({
+            "departamento": g["departamento"],
+            "trabajadores": len(g["personas"]),
+            "dias_registrados": r["dias_registrados"],
+            "dias_calculables": r["dias_calculables"],
+            "dias_incompletos": r["dias_incompletos"],
+            "entrada": r["entrada"], "salida": r["salida"],
+            "duracion": r["duracion"], "duracion_min": r["duracion_min"],
+            "entrada_min": r["entrada_min"],
+            "horas_promedio": r["horas_promedio"],
+            "horas_total": r["horas_total"],
+        })
+
+    con_jornada = [s for s in supervisores if s["dias_calculables"] > 0]
+    supervisores.sort(key=lambda x: -(x["duracion_min"] or 0))
+
     return {
         "vacio": False,
         "total": total,
         "trabajadores": trabajadores,
+        "supervisores": supervisores,
+        "supervisores_mayor": sorted(con_jornada,
+            key=lambda x: -(x["duracion_min"] or 0))[:top],
+        "supervisores_menor": sorted(con_jornada,
+            key=lambda x: (x["duracion_min"] or 0))[:top],
         "mayor_duracion": mayor,
         "menor_duracion": menor,
         "madrugadores": madrugadores,

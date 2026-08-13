@@ -31,7 +31,7 @@ export const API = {
     return pedir(`${BASE}/filtros?${q}`);
   },
 
-  analisis: ({ empresaId, zonaId, anio, mes, dia, trabajador } = {}) => {
+  analisis: ({ empresaId, zonaId, anio, mes, dia, trabajador, departamento } = {}) => {
     const q = new URLSearchParams();
     if (empresaId) q.append('empresa_id', empresaId);
     if (zonaId) q.append('zona_id', zonaId);
@@ -39,6 +39,7 @@ export const API = {
     if (mes) q.append('mes', mes);
     if (dia) q.append('dia', dia);
     if (trabajador && trabajador.trim()) q.append('trabajador', trabajador.trim());
+    if (departamento) q.append('departamento', departamento);
     return pedir(`${BASE}/analisis?${q}`);
   },
 

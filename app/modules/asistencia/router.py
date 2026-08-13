@@ -88,6 +88,8 @@ def get_filtros(empresa_id: int | None = Query(None),
     meses = repo.meses_disponibles(eid, anio, zid) if anio else []
     dias = repo.dias_con_registro(eid, anio, mes, zid) if (anio and mes) else []
     return {"ok": True, "empresa_id": eid, "zona_id": zid,
+            "departamento": departamento,
+            "departamentos": repo.departamentos_disponibles(eid, zid, anio, mes),
             "zonas": repo.listar_zonas(eid), "anios": anios,
             "meses": [{"mes": m, "nombre": nombre_mes(m)} for m in meses],
             "dias": dias}
@@ -228,6 +230,7 @@ def get_analisis(empresa_id: int | None = Query(None),
                  mes: int | None = Query(None),
                  dia: int | None = Query(None),
                  trabajador: str | None = Query(None),
+                 departamento: str | None = Query(None),
                  top: int = Query(10, ge=5, le=50),
                  _=Depends(sesion)):
     """
@@ -242,7 +245,8 @@ def get_analisis(empresa_id: int | None = Query(None),
     """
     eid = _empresa(empresa_id)
     zid = _zona(eid, zona_id)
-    filas = repo.listar_marcaciones(eid, anio, mes, dia, trabajador, zid)
+    filas = repo.listar_marcaciones(eid, anio, mes, dia, trabajador, zid,
+                                    departamento)
 
     resultado = analizar(filas, top)
     empresa = repo.empresa_por_id(eid)
@@ -255,6 +259,8 @@ def get_analisis(empresa_id: int | None = Query(None),
             "zona_id": zid, "zona": zona["nombre"] if zona else None,
             "anio": anio, "mes": mes, "dia": dia,
             "mes_nombre": nombre_mes(mes) if mes else None,
+            "departamento": departamento,
+            "departamentos": repo.departamentos_disponibles(eid, zid, anio, mes),
             "zonas": repo.listar_zonas(eid),
             "anios": repo.anios_disponibles(eid, zid),
             "meses": [{"mes": m, "nombre": nombre_mes(m)}

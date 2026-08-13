@@ -8,8 +8,8 @@ import { API } from './api.js';
 const S = {
   empresaId: null, empresa: null, empresas: [],
   zonaId: '', zona: null, zonas: [],
-  anio: '', mes: '', dia: '', trabajador: '',
-  anios: [], meses: [], dias: [],
+  anio: '', mes: '', dia: '', trabajador: '', departamento: '',
+  anios: [], meses: [], dias: [], departamentos: [],
   tab: 'analisis', datos: null,
 };
 
@@ -60,6 +60,8 @@ function esqueleto(cont) {
         <select id="aMe" style="min-width:130px"><option value="">Todos</option></select></div>
       <div class="g"><label for="aDi">Día</label>
         <select id="aDi" style="min-width:90px"><option value="">Todos</option></select></div>
+      <div class="g"><label for="aDe">Supervisor</label>
+        <select id="aDe" style="min-width:160px"><option value="">Todos</option></select></div>
       <div class="g"><label for="aTr">Trabajador</label>
         <input id="aTr" placeholder="Buscar…" autocomplete="off" value="${esc(S.trabajador)}"
                style="min-width:190px;padding:8px 11px;border:1.5px solid var(--line);
@@ -84,6 +86,7 @@ function esqueleto(cont) {
   $('#aAn').onchange = e => { S.anio = e.target.value; S.mes = ''; S.dia = ''; cargar(); };
   $('#aMe').onchange = e => { S.mes = e.target.value; S.dia = ''; cargar(); };
   $('#aDi').onchange = e => { S.dia = e.target.value; cargar(); };
+  $('#aDe').onchange = e => { S.departamento = e.target.value; cargar(); };
   $('#aR').onclick = cargar;
 
   let temporizador = null;
@@ -110,8 +113,9 @@ async function cargar() {
   try {
     S.datos = await API.analisis({
       empresaId: S.empresaId, zonaId: S.zonaId, anio: S.anio, mes: S.mes,
-      dia: S.dia, trabajador: S.trabajador,
+      dia: S.dia, trabajador: S.trabajador, departamento: S.departamento,
     });
+    S.departamentos = S.datos.departamentos || [];
     S.zonas = S.datos.zonas || [];
     S.zona = S.datos.zona;
     S.anios = S.datos.anios || [];
@@ -142,6 +146,12 @@ function pintarFiltros() {
   if (zo) zo.innerHTML = `<option value="">Todas</option>` + S.zonas.map(z =>
     `<option value="${z.id}" ${String(z.id) === String(S.zonaId) ? 'selected' : ''}>${esc(z.nombre)}</option>`).join('');
 
+  const de = $('#aDe');
+  if (de) de.innerHTML = `<option value="">Todos</option>`
+    + S.departamentos.map(d =>
+        `<option value="${esc(d)}" ${d === S.departamento ? 'selected' : ''}>${esc(d)}</option>`).join('')
+    + `<option value="Sin asignar" ${S.departamento === 'Sin asignar' ? 'selected' : ''}>Sin asignar</option>`;
+
   const an = $('#aAn');
   if (an) an.innerHTML = `<option value="">Todos</option>` + S.anios.map(a =>
     `<option value="${a}" ${String(a) === String(S.anio) ? 'selected' : ''}>${a}</option>`).join('');
@@ -156,7 +166,8 @@ function pintarFiltros() {
 }
 
 function periodoTexto() {
-  const z = S.zona ? `${S.zona} · ` : '';
+  const z = (S.zona ? `${S.zona} · ` : '')
+          + (S.departamento ? `${S.departamento} · ` : '');
   if (S.dia && S.mes && S.anio) return `${z}${S.dia} de ${MESES[+S.mes - 1]} de ${S.anio}`;
   if (S.mes && S.anio) return `${z}${cap(MESES[+S.mes - 1])} de ${S.anio}`;
   if (S.anio) return `${z}Año ${S.anio}`;
@@ -202,7 +213,7 @@ function vistaAnalisis(c) {
       <div class="twrap">
         <table class="ft">
           <thead><tr>
-            <th class="num">Código</th><th>Nombre</th>
+            <th class="num">Código</th><th>Nombre</th><th>Supervisor</th>
             <th class="num">${unDia ? 'Entrada' : 'Entrada prom.'}</th>
             <th class="num">${unDia ? 'Salida' : 'Salida prom.'}</th>
             <th class="num">${unDia ? 'Jornada' : 'Jornada prom.'}</th>
@@ -212,6 +223,7 @@ function vistaAnalisis(c) {
           <tbody>${d.trabajadores.map(x => `<tr>
             <td class="num">${esc(x.codigo)}</td>
             <td class="ln">${esc(x.nombre)}</td>
+            <td>${esc(x.departamento || '—')}</td>
             <td class="num">${x.entrada || '—'}</td>
             <td class="num">${x.salida || '—'}</td>
             <td class="num">${x.duracion || '—'}</td>
@@ -237,6 +249,8 @@ function vistaAnalisis(c) {
       </div>
     </div>
 
+    ${seccionSupervisores(d)}
+
     <div class="grid2">
       <div class="card">
         <h3>Entradas más tempranas</h3>
@@ -257,6 +271,79 @@ function vistaAnalisis(c) {
       ${barras(d.por_dia.map(x => ({
         etiqueta: x.fecha, valor: x.horas_promedio, extra: x.duracion })), ' h')}
     </div>` : ''}`;
+}
+
+function seccionSupervisores(d) {
+  const sup = d.supervisores || [];
+  if (!sup.length) return '';
+
+  const conJornada = sup.filter(x => x.dias_calculables > 0);
+  const soloSinAsignar = sup.length === 1 && sup[0].departamento === 'Sin asignar';
+
+  if (soloSinAsignar) return `
+    <div class="card" style="padding:14px 18px">
+      <p class="sub" style="margin:0">Los datos cargados no traen el supervisor
+        (columna <strong>Department</strong> del huellero). Cuando el archivo la
+        incluya, aquí aparecerá la comparación entre equipos.</p>
+    </div>`;
+
+  return `
+    <div class="card">
+      <h3>Jornada promedio por supervisor</h3>
+      <p class="sub">Compara los equipos. Cada barra es la duración promedio de
+        las jornadas del personal a cargo de ese supervisor.</p>
+      ${barras(conJornada.map(x => ({
+        etiqueta: x.departamento, valor: x.horas_promedio, extra: x.duracion })), ' h')}
+      <div class="twrap" style="max-height:none;margin-top:18px">
+        <table class="ft">
+          <thead><tr><th>Supervisor</th><th class="num">Trabajadores</th>
+            <th class="num">Entrada prom.</th><th class="num">Salida prom.</th>
+            <th class="num">Jornada prom.</th><th class="num">Horas totales</th>
+            <th class="num">Registros</th><th class="num">Revisar</th></tr></thead>
+          <tbody>${sup.map(x => `<tr>
+            <td class="ln">${esc(x.departamento)}</td>
+            <td class="num">${n0(x.trabajadores)}</td>
+            <td class="num">${x.entrada || '—'}</td>
+            <td class="num">${x.salida || '—'}</td>
+            <td class="num">${x.duracion || '—'}</td>
+            <td class="num">${x.horas_total ? n2(x.horas_total, 1) : '—'}</td>
+            <td class="num">${n0(x.dias_registrados)}</td>
+            <td class="num">${x.dias_incompletos
+              ? `<span class="sem sem-bajo">${x.dias_incompletos}</span>` : '—'}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>
+
+    ${conJornada.length > 1 ? `
+    <div class="grid2">
+      <div class="card">
+        <h3>Supervisores · mayor jornada</h3>
+        <p class="sub">Equipos con las jornadas promedio más largas.</p>
+        ${tablaSupervisor(d.supervisores_mayor)}
+      </div>
+      <div class="card">
+        <h3>Supervisores · menor jornada</h3>
+        <p class="sub">Equipos con las jornadas promedio más cortas.</p>
+        ${tablaSupervisor(d.supervisores_menor)}
+      </div>
+    </div>` : ''}`;
+}
+
+function tablaSupervisor(lista) {
+  if (!lista || !lista.length)
+    return `<p style="color:var(--ink-soft);font-size:13px">Sin datos.</p>`;
+  return `<div class="twrap" style="max-height:330px">
+      <table class="ft">
+        <thead><tr><th>Supervisor</th><th class="num">Jornada</th>
+          <th class="num">Trabajadores</th></tr></thead>
+        <tbody>${lista.map(x => `<tr>
+          <td class="ln">${esc(x.departamento)}</td>
+          <td class="num">${x.duracion || '—'}</td>
+          <td class="num">${n0(x.trabajadores)}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
 }
 
 function tablaRanking(lista, campo = 'duracion') {
@@ -345,12 +432,14 @@ function vistaRevisar(c) {
       <div class="twrap">
         <table class="ft">
           <thead><tr><th>Fecha</th><th class="num">Código</th><th>Nombre</th>
+            <th>Supervisor</th>
             <th class="num">Entrada</th><th class="num">Salida</th>
             <th class="num">Marcas</th><th>Motivo</th></tr></thead>
           <tbody>${lista.map(x => `<tr>
             <td>${esc(x.fecha)}</td>
             <td class="num">${esc(x.codigo)}</td>
             <td class="ln">${esc(x.nombre)}</td>
+            <td>${esc(x.departamento || '—')}</td>
             <td class="num">${x.entrada || '—'}</td>
             <td class="num">${x.salida || '—'}</td>
             <td class="num">${x.n_marcas}</td>
@@ -417,7 +506,7 @@ function vistaCarga(c) {
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5-5 5 5"/>
           <path d="M12 5v12"/></svg></div>
         <div class="m">Arrastra el archivo aquí o haz clic para elegirlo</div>
-        <div class="s" id="cHint">.xlsx con las columnas Employee ID, Name y un día por columna</div>
+        <div class="s" id="cHint">.xlsx con Employee ID, Name, Department y un día por columna</div>
         <input type="file" id="cF" accept=".xlsx,.xlsm" hidden>
       </div>
       <div id="cCh"></div>
@@ -437,13 +526,17 @@ function vistaCarga(c) {
           <tbody>
             <tr><td class="ln">1 · matriz</td>
               <td>Una fila por trabajador, una columna por día del mes</td>
-              <td>Employee ID · Name · 1 · 2 · 3 …</td></tr>
+              <td>Employee ID · Name · Department · 1 · 2 · 3 …</td></tr>
             <tr><td class="ln">2 · lista</td>
               <td>Una fila por trabajador y fecha, con las horas separadas</td>
               <td>ID · Nombre · Departamento · Fecha · Entrada · Salida</td></tr>
           </tbody>
         </table>
       </div>
+      <p class="sub">La columna <strong>Department</strong> es el supervisor a cargo
+        de cada trabajador. Con ella el módulo compara equipos: qué supervisor tiene
+        las jornadas más largas, cuál las más cortas y cuánta gente lleva. Si el
+        archivo no la trae, los datos se cargan igual y el sistema avisa.</p>
       <p class="sub">En el <strong>formato 2</strong> las horas ya vienen separadas:
         si falta la entrada o la salida, el día va a revisar. Solo se cargan las filas
         cuya fecha esté dentro del mes elegido.</p>
@@ -503,7 +596,7 @@ function vistaCarga(c) {
     const hint = $('#cHint');
     if (hint) hint.textContent = fmt === 2
       ? '.xlsx con las columnas ID, Nombre, Departamento, Fecha, Entrada, Salida'
-      : '.xlsx con las columnas Employee ID, Name y un día por columna';
+      : '.xlsx con Employee ID, Name, Department y un día por columna';
 
     if (!zid) {
       caja.innerHTML = `<div class="msg msg-warn" style="margin:0 0 16px">

@@ -272,7 +272,8 @@ _SELECT_MARCACIONES = """
 def listar_marcaciones(empresa_id: int | None = None, anio: int | None = None,
                        mes: int | None = None, dia: int | None = None,
                        trabajador: str | None = None,
-                       zona_id: int | None = None) -> list[dict]:
+                       zona_id: int | None = None,
+                       departamento: str | None = None) -> list[dict]:
     """
     Marcaciones filtradas. Todos los filtros son opcionales:
     sin ninguno devuelve todo el histórico de la empresa.
@@ -298,6 +299,12 @@ def listar_marcaciones(empresa_id: int | None = None, anio: int | None = None,
         sql += " AND (t.nombre ILIKE %s OR t.codigo ILIKE %s)"
         patron = f"%{trabajador.strip()}%"
         params.extend([patron, patron])
+    if departamento and departamento.strip():
+        if departamento.strip().lower() in ("sin asignar", "(sin asignar)"):
+            sql += " AND (m.departamento IS NULL OR m.departamento = '')"
+        else:
+            sql += " AND m.departamento = %s"
+            params.append(departamento.strip())
     sql += " ORDER BY t.nombre, m.fecha"
     return db.fetch_all(sql, tuple(params))
 
@@ -314,6 +321,30 @@ def marcaciones_de_trabajador(trabajador_id: int, anio: int | None = None,
         params.append(mes)
     sql += " ORDER BY m.fecha"
     return db.fetch_all(sql, tuple(params))
+
+
+def departamentos_disponibles(empresa_id: int, zona_id=None,
+                              anio=None, mes=None) -> list[str]:
+    """Supervisores con marcaciones, para el desplegable del filtro."""
+    sql = """
+        SELECT DISTINCT m.departamento AS v
+        FROM plantacion.asis_marcacion m
+        JOIN plantacion.asis_periodo p ON p.id = m.periodo_id
+        WHERE p.empresa_id = %s
+          AND m.departamento IS NOT NULL AND m.departamento <> ''
+    """
+    params: list = [empresa_id]
+    if zona_id:
+        sql += " AND p.zona_id = %s"
+        params.append(zona_id)
+    if anio:
+        sql += " AND p.anio = %s"
+        params.append(anio)
+    if mes:
+        sql += " AND p.mes = %s"
+        params.append(mes)
+    sql += " ORDER BY v"
+    return [f["v"] for f in db.fetch_all(sql, tuple(params))]
 
 
 def dias_con_registro(empresa_id: int, anio: int, mes: int,
