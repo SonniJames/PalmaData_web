@@ -86,6 +86,27 @@ def resumen_trabajador(marcaciones: list[dict]) -> dict:
         "jornada_max": minutos_a_duracion(max(duraciones)) if duraciones else None,
     }
 
+def _motivo(f: dict) -> str:
+    """
+    Por qué un día no tiene jornada calculable.
+
+    Se decide por lo que falta, no por lo que hay: en el formato 2 una
+    persona puede tener solo salida (marcó al irse, no al llegar), y eso
+    sigue siendo una sola marcación.
+    """
+    entrada, salida = f.get("entrada"), f.get("salida")
+
+    if entrada and salida:
+        minutos = f.get("minutos")
+        if minutos is not None and minutos < 0:
+            return "Salida antes de la entrada"
+        return "Marcas muy juntas"
+
+    if salida:
+        return "Solo marcó la salida"
+    if entrada:
+        return "Solo marcó la entrada"
+    return "Sin marcación"
 
 def analizar(filas: list[dict], top: int = 10) -> dict:
     """
@@ -190,8 +211,7 @@ def analizar(filas: list[dict], top: int = 10) -> dict:
         "entrada": f["entrada"].strftime("%H:%M") if f.get("entrada") else None,
         "salida": f["salida"].strftime("%H:%M") if f.get("salida") else None,
         "n_marcas": f.get("n_marcas"),
-        "motivo": ("Marcas muy juntas" if f.get("salida")
-                   else "Una sola marcación"),
+        "motivo": _motivo(f),
     } for f in incompletos]
     revisar.sort(key=lambda x: (x["fecha"], x["nombre"] or ""))
 
