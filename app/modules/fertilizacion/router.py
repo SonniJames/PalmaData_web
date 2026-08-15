@@ -175,7 +175,7 @@ def get_formato(desde: int | None = Query(None,
                 description="Año del que precargar las identificaciones"),
                 empresa_id: int | None = Query(None),
                 _=Depends(sesion)):
-    """Descarga el Excel de formato con sus cuatro hojas."""
+    """Descarga el Excel de formato con sus seis hojas de datos."""
     eid = _empresa(empresa_id)
     idents = repo.identificaciones_de_campana(eid, desde) if desde else None
     ferts = repo.fertilizantes_de_campana(eid, desde) if desde else None

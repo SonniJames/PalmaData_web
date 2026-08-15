@@ -1065,7 +1065,8 @@ function vistaCarga(c) {
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5-5 5 5"/>
           <path d="M12 5v12"/></svg></div>
         <div class="m">Arrastra el archivo aquí o haz clic para elegirlo</div>
-        <div class="s">.xlsx con las hojas identificacion, anal_foliar, ind_balan y reque_fert</div>
+        <div class="s">.xlsx con las seis hojas: identificacion, anal_foliar,
+          ind_balan, reque_fert, reque_ox y reque_rend</div>
         <input type="file" id="cF" accept=".xlsx,.xlsm" hidden>
       </div>
       <div id="cCh"></div>
@@ -1092,6 +1093,12 @@ function vistaCarga(c) {
             <tr><td class="ln">reque_fert</td>
               <td>Fertilizantes requeridos y su cantidad</td>
               <td>Plan, costos y gráficas</td></tr>
+            <tr><td class="ln">reque_ox</td>
+              <td>Requerimiento en forma de óxido: N, P2O5, K2O, CaO, MgO, S, B2O3</td>
+              <td>Pestaña Requerimiento en óxido</td></tr>
+            <tr><td class="ln">reque_rend</td>
+              <td>Requerimiento total para el rendimiento esperado, en forma elemental</td>
+              <td>Pestaña Requerimiento para rendimiento</td></tr>
           </tbody>
         </table>
       </div>

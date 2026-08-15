@@ -269,7 +269,7 @@ def generar_formato(identificaciones: list[str] | None = None,
                     fertilizantes: list[str] | None = None,
                     empresa: str | None = None) -> bytes:
     """
-    Genera el Excel de formato con sus cuatro hojas más instrucciones.
+    Genera el Excel de formato con sus seis hojas de datos más instrucciones.
 
     Si se pasan `identificaciones` (por ejemplo, las de la campaña anterior),
     se precargan en la columna A de todas las hojas, así el usuario solo
