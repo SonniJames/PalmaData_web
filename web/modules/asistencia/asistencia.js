@@ -150,7 +150,10 @@ function pintarFiltros() {
   if (de) de.innerHTML = `<option value="">Todos</option>`
     + S.departamentos.map(d =>
         `<option value="${esc(d)}" ${d === S.departamento ? 'selected' : ''}>${esc(d)}</option>`).join('')
-    + `<option value="Sin asignar" ${S.departamento === 'Sin asignar' ? 'selected' : ''}>Sin asignar</option>`;
+    + ((S.datos?.supervisores || []).some(x => x.departamento === 'Sin asignar')
+        || S.departamento === 'Sin asignar'
+        ? `<option value="Sin asignar" ${S.departamento === 'Sin asignar' ? 'selected' : ''}>Sin asignar</option>`
+        : '');
 
   const an = $('#aAn');
   if (an) an.innerHTML = `<option value="">Todos</option>` + S.anios.map(a =>

@@ -86,13 +86,14 @@ def resumen_trabajador(marcaciones: list[dict]) -> dict:
         "jornada_max": minutos_a_duracion(max(duraciones)) if duraciones else None,
     }
 
-def _motivo(f: dict) -> str:
+
+def motivo_revisar(f: dict) -> str:
     """
     Por qué un día no tiene jornada calculable.
 
-    Se decide por lo que falta, no por lo que hay: en el formato 2 una
-    persona puede tener solo salida (marcó al irse, no al llegar), y eso
-    sigue siendo una sola marcación.
+    Se decide por lo que FALTA, no por lo que hay. En el formato 2 el
+    huellero distingue entrada de salida, así que alguien puede tener
+    solo salida; decirle "marcas muy juntas" sería falso.
     """
     entrada, salida = f.get("entrada"), f.get("salida")
 
@@ -102,11 +103,18 @@ def _motivo(f: dict) -> str:
             return "Salida antes de la entrada"
         return "Marcas muy juntas"
 
+    # Una sola marca. El formato 1 no distingue entrada de salida: la
+    # posición se estimó por la hora del día, así que se advierte.
+    # El formato 2 sí la trae explícita del huellero.
+    if f.get("estimado") or f.get("formato") == 1:
+        return ("Solo una marca (se estimó salida)" if salida
+                else "Solo una marca (se estimó entrada)")
     if salida:
         return "Solo marcó la salida"
     if entrada:
         return "Solo marcó la entrada"
     return "Sin marcación"
+
 
 def analizar(filas: list[dict], top: int = 10) -> dict:
     """
@@ -211,7 +219,8 @@ def analizar(filas: list[dict], top: int = 10) -> dict:
         "entrada": f["entrada"].strftime("%H:%M") if f.get("entrada") else None,
         "salida": f["salida"].strftime("%H:%M") if f.get("salida") else None,
         "n_marcas": f.get("n_marcas"),
-        "motivo": _motivo(f),
+        "estimado": bool(f.get("estimado")) or f.get("formato") == 1,
+        "motivo": motivo_revisar(f),
     } for f in incompletos]
     revisar.sort(key=lambda x: (x["fecha"], x["nombre"] or ""))
 

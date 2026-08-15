@@ -106,6 +106,21 @@ def extraer_marcas(celda) -> list[time]:
 # marcación (marcó varias veces al entrar y ninguna al salir).
 MINUTOS_SOSPECHOSOS = 30
 
+# Corte para decidir si UNA marca suelta es entrada o salida.
+#
+# El formato 1 no lo distingue: solo trae horas sueltas en la celda. Con
+# dos o más marcas basta el orden (la primera entra, la última sale), pero
+# con una sola hay que estimarlo por la hora del día.
+#
+# Calibrado contra los datos del formato 2, donde el huellero SÍ clasifica:
+#   entradas reales: 05:07 a 06:43
+#   salidas reales:  10:52 a 16:27
+# Queda un hueco de más de 4 horas. Con el corte a las 10:00, los 243
+# registros reales se clasifican correctamente.
+#
+# Si cambian los turnos, este es el único número que hay que ajustar.
+HORA_CORTE_ENTRADA_SALIDA = 10
+
 
 def jornada(marcas: list[time]) -> dict:
     """
@@ -126,9 +141,16 @@ def jornada(marcas: list[time]) -> dict:
     distintas = sorted({(t.hour, t.minute, t.second) for t in ordenadas})
 
     if len(distintas) < 2:
-        # Una sola hora (aunque el huellero la haya repetido)
-        return {"estado": "incompleta", "entrada": ordenadas[0],
-                "salida": None, "minutos": None, "n_marcas": len(marcas)}
+        # Una sola hora (aunque el huellero la haya repetido).
+        # Como el formato 1 no dice si fue al entrar o al salir, se estima
+        # por la hora del día y queda marcado como estimación.
+        unica = ordenadas[0]
+        es_salida = unica.hour >= HORA_CORTE_ENTRADA_SALIDA
+        return {"estado": "incompleta",
+                "entrada": None if es_salida else unica,
+                "salida": unica if es_salida else None,
+                "minutos": None, "n_marcas": len(marcas),
+                "estimado": True}
 
     entrada, salida = ordenadas[0], ordenadas[-1]
     minutos = ((salida.hour * 60 + salida.minute) -
@@ -261,6 +283,7 @@ def leer_excel(contenido: bytes, anio: int, mes: int) -> tuple[dict, list[str]]:
                 "minutos": j["minutos"],
                 "estado": j["estado"],
                 "n_marcas": j["n_marcas"],
+                "estimado": j.get("estimado", False),
                 "marcas": [t.strftime("%H:%M:%S") for t in marcas],
                 "departamento": depto,
             })
@@ -375,6 +398,10 @@ def generar_formato(anio: int, mes: int,
         ("", ""),
         ("El sistema toma la primera y la última hora distintas del día.", ""),
         ("No importa cuántas marcas haya: 2, 4 o 10, el resultado es el mismo.", ""),
+        ("", ""),
+        ("Si un día solo tiene una hora, el sistema estima si fue entrada o", ""),
+        ("salida según la hora: antes de las 10:00 se toma como entrada,", ""),
+        ("después como salida. En el análisis se advierte que es estimación.", ""),
         ("", ""),
         ("Si un día solo tiene una hora (o la misma repetida), queda marcado", ""),
         ("como incompleto: falta la entrada o la salida, así que no se puede", ""),
