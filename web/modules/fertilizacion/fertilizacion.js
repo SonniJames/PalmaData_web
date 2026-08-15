@@ -330,12 +330,12 @@ function tarjetaBloque(b, titulo, sub, tab) {
   return `<div class="card">
       <h3>${esc(titulo)}</h3>
       <p class="sub">${esc(sub)} Total de la campaña:
-        <strong>${n2(b.total, 1)}</strong> sobre ${n0(b.palmas)} palmas.</p>
-      ${barras(b.por_elemento.map(e => ({ etiqueta: e.elemento, valor: e.total })), '')}
+        <strong>${n2(b.total, 1)} toneladas</strong> sobre ${n0(b.palmas)} palmas.</p>
+      ${barras(b.por_elemento.map(e => ({ etiqueta: e.elemento, valor: e.total })), ' t')}
       <div class="twrap" style="max-height:none;margin-top:14px">
         <table class="ft">
-          <thead><tr><th>Elemento</th><th class="num">Total</th>
-            <th class="num">%</th><th class="num">Promedio por lote</th></tr></thead>
+          <thead><tr><th>Elemento</th><th class="num">Total (t)</th>
+            <th class="num">%</th><th class="num">Promedio por lote (t)</th></tr></thead>
           <tbody>${b.por_elemento.map(e => `<tr>
             <td class="ln">${esc(e.elemento)}</td>
             <td class="num">${n2(e.total, 2)}</td>
@@ -611,12 +611,12 @@ const BLOQUES = {
   oxido: {
     titulo: 'Requerimiento en óxido',
     sub: 'Nutrientes expresados en forma de óxido, que es como se comercializan los fertilizantes.',
-    unidad: 'kg',
+    unidad: 'toneladas',
   },
   rendimiento: {
     titulo: 'Requerimiento total para el rendimiento esperado',
     sub: 'Nutrientes en forma elemental que hacen falta para alcanzar la cosecha esperada.',
-    unidad: 'kg',
+    unidad: 'toneladas',
   },
 };
 
@@ -642,7 +642,10 @@ async function vistaElementos(c, bloque) {
   }
 
   const t = d.total;
-  const principal = d.por_elemento[0];
+  // El de mayor requerimiento, no el primero de la lista: `por_elemento`
+  // viene en orden agronómico (N, P, K...), no ordenado por cantidad.
+  const principal = d.por_elemento.reduce(
+    (a, b) => (b.total > a.total ? b : a), d.por_elemento[0]);
 
   c.innerHTML = `
     <div class="kpis">
@@ -650,7 +653,10 @@ async function vistaElementos(c, bloque) {
       <div class="kpi"><div class="l">Palmas</div><div class="v">${n0(t.palmas)}</div></div>
       <div class="kpi acc"><div class="l">Requerimiento total</div>
         <div class="v">${n2(t.total, 1)}</div><div class="s">${cfg.unidad}</div></div>
-      <div class="kpi"><div class="l">${esc(principal.elemento)}</div>
+      <div class="kpi"><div class="l">Por palma</div>
+        <div class="v">${n2(t.palmas ? t.total * 1000 / t.palmas : 0, 3)}</div>
+        <div class="s">kg</div></div>
+      <div class="kpi"><div class="l">Mayor: ${esc(principal.elemento)}</div>
         <div class="v">${n2(principal.total, 1)}</div>
         <div class="s">${n2(principal.porcentaje, 1)}% del total</div></div>
       <div class="kpi"><div class="l">Elementos</div><div class="v">${d.elementos.length}</div></div>
@@ -662,19 +668,19 @@ async function vistaElementos(c, bloque) {
     <div class="card">
       <h3>${esc(cfg.titulo)}</h3>
       <p class="sub">${esc(cfg.sub)}</p>
-      ${barras(d.por_elemento.map(e => ({ etiqueta: e.elemento, valor: e.total })), '')}
+      ${barras(d.por_elemento.map(e => ({ etiqueta: e.elemento, valor: e.total })), ' t')}
       <div class="twrap" style="max-height:none;margin-top:16px">
         <table class="ft">
-          <thead><tr><th>Elemento</th><th class="num">Total</th>
-            <th class="num">% del total</th><th class="num">Promedio por lote</th>
-            <th class="num">Por palma</th>
-            ${t.hectareas ? '<th class="num">Por hectárea</th>' : ''}</tr></thead>
+          <thead><tr><th>Elemento</th><th class="num">Total (t)</th>
+            <th class="num">% del total</th><th class="num">Promedio por lote (t)</th>
+            <th class="num">kg por palma</th>
+            ${t.hectareas ? '<th class="num">t por hectárea</th>' : ''}</tr></thead>
           <tbody>${d.por_elemento.map(e => `<tr>
             <td class="ln">${esc(e.elemento)}</td>
             <td class="num">${n2(e.total, 3)}</td>
             <td class="num">${n2(e.porcentaje, 1)}%</td>
             <td class="num">${n2(e.promedio, 4)}</td>
-            <td class="num">${n2(e.por_palma, 6)}</td>
+            <td class="num">${n2(e.por_palma * 1000, 4)}</td>
             ${t.hectareas ? `<td class="num">${n2(e.por_hectarea, 4)}</td>` : ''}
           </tr>`).join('')}</tbody>
           <tfoot><tr><td>Total</td><td class="num">${n2(t.total, 3)}</td>
@@ -688,19 +694,19 @@ async function vistaElementos(c, bloque) {
 
     <div class="card">
       <h3>Elementos por sector</h3>
-      <p class="sub">Cuánto de cada elemento requiere cada finca.</p>
+      <p class="sub">Toneladas de cada elemento que requiere cada finca.</p>
       ${matrizElem(d.matriz_sector)}
     </div>
 
     <div class="card">
       <h3>Elementos por zona</h3>
-      <p class="sub">Distribución por zona.</p>
+      <p class="sub">Toneladas de cada elemento por zona.</p>
       ${matrizElem(d.matriz_zona)}
     </div>
 
     <div class="card">
       <h3>Lotes con mayor requerimiento</h3>
-      <p class="sub">Ordenados por el total de todos los elementos.</p>
+      <p class="sub">Toneladas por elemento, ordenados por el total.</p>
       <div class="twrap" style="max-height:none">
         <table class="ft">
           <thead><tr><th>Lote</th><th class="num">UMA</th><th>Sector</th><th>Zona</th>
@@ -726,25 +732,25 @@ function tablaGrupoElem(titulo, grupos, elementos, total) {
   if (!grupos || !grupos.length) return '';
   return `<div class="card">
       <h3>${esc(titulo)}</h3>
-      <p class="sub">Requerimiento total de cada grupo y su peso en la campaña.</p>
-      ${barras(grupos.map(g => ({ etiqueta: g.grupo, valor: g.total })), '')}
+      <p class="sub">Toneladas requeridas por cada grupo y su peso en la campaña.</p>
+      ${barras(grupos.map(g => ({ etiqueta: g.grupo, valor: g.total })), ' t')}
       <div class="twrap" style="max-height:none;margin-top:16px">
         <table class="ft">
           <thead><tr><th>Grupo</th><th class="num">Lotes</th><th class="num">Palmas</th>
-            <th class="num">Total</th><th class="num">% del total</th>
-            <th class="num">Por palma</th></tr></thead>
+            <th class="num">Total (t)</th><th class="num">% del total</th>
+            <th class="num">kg por palma</th></tr></thead>
           <tbody>${grupos.map(g => `<tr>
             <td class="ln">${esc(g.grupo)}</td>
             <td class="num">${n0(g.lotes)}</td>
             <td class="num">${n0(g.palmas)}</td>
             <td class="num">${n2(g.total, 3)}</td>
             <td class="num">${n2(g.total / (total.total || 1) * 100, 1)}%</td>
-            <td class="num">${g.palmas ? n2(g.total / g.palmas, 6) : '—'}</td>
+            <td class="num">${g.palmas ? n2(g.total * 1000 / g.palmas, 3) : '—'}</td>
           </tr>`).join('')}</tbody>
           <tfoot><tr><td>Total</td><td class="num">${n0(total.lotes)}</td>
             <td class="num">${n0(total.palmas)}</td>
             <td class="num">${n2(total.total, 3)}</td><td class="num">100%</td>
-            <td class="num">${total.palmas ? n2(total.total / total.palmas, 6) : '—'}</td>
+            <td class="num">${total.palmas ? n2(total.total * 1000 / total.palmas, 3) : '—'}</td>
           </tr></tfoot>
         </table>
       </div>
