@@ -240,12 +240,16 @@ _SELECT = """
            l.mst, l.tons, l.extra, l.fila_excel,
            COALESCE(f.datos, '{}'::jsonb) AS foliar,
            COALESCE(b.datos, '{}'::jsonb) AS balance,
-           COALESCE(r.datos, '{}'::jsonb) AS requerimiento
+           COALESCE(r.datos, '{}'::jsonb) AS requerimiento,
+           COALESCE(o.datos, '{}'::jsonb) AS oxido,
+           COALESCE(rd.datos, '{}'::jsonb) AS rendimiento
     FROM plantacion.fert_lote l
     JOIN plantacion.fert_campana c ON c.id = l.campana_id
     LEFT JOIN plantacion.fert_foliar f        ON f.lote_id = l.id
     LEFT JOIN plantacion.fert_balance b       ON b.lote_id = l.id
     LEFT JOIN plantacion.fert_requerimiento r ON r.lote_id = l.id
+    LEFT JOIN plantacion.fert_oxido o         ON o.lote_id = l.id
+    LEFT JOIN plantacion.fert_rendimiento rd  ON rd.lote_id = l.id
 """
 
 
@@ -319,6 +323,28 @@ def fertilizantes_de_campana(empresa_id: int, anio: int) -> list[str]:
         ORDER BY producto
     """, (empresa_id, anio))
     return [f["producto"] for f in filas]
+
+
+def elementos_de_bloque(empresa_id: int, anio: int, tabla: str) -> list[str]:
+    """
+    Elementos que trae un bloque JSONB en esa campaña.
+    Sirve igual para fert_oxido y fert_rendimiento: los nombres salen
+    de los datos, no de una lista fija en el código.
+    """
+    permitidas = {"fert_foliar", "fert_balance", "fert_requerimiento",
+                  "fert_oxido", "fert_rendimiento"}
+    if tabla not in permitidas:
+        raise ValueError(f"Tabla no permitida: {tabla}")
+    filas = db.fetch_all(f"""
+        SELECT DISTINCT kv.key AS elemento
+        FROM plantacion.{tabla} t
+        JOIN plantacion.fert_lote l    ON l.id = t.lote_id
+        JOIN plantacion.fert_campana c ON c.id = l.campana_id,
+             LATERAL jsonb_each(t.datos) kv
+        WHERE c.empresa_id = %s AND c.anio = %s
+        ORDER BY elemento
+    """, (empresa_id, anio))
+    return [f["elemento"] for f in filas]
 
 
 def nutrientes_de_campana(empresa_id: int, anio: int,

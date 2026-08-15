@@ -74,6 +74,8 @@ export const API = {
   borrarLote: (id) => pedir(`${BASE}/lotes/${id}`, { method: 'DELETE' }),
 
   aplicaciones: (anio, f = {}) => pedir(`${BASE}/aplicaciones?${filtros(anio, f)}`),
+  oxido: (anio, f = {}) => pedir(`${BASE}/oxido?${filtros(anio, f)}`),
+  rendimiento: (anio, f = {}) => pedir(`${BASE}/rendimiento?${filtros(anio, f)}`),
 
   dashboard: (anio, empresaId) =>
     pedir(`${BASE}/dashboard?anio=${anio}&empresa_id=${empresaId}`),

@@ -29,6 +29,8 @@ HOJA_IDENTIFICACION = "identificacion"
 HOJA_FOLIAR = "anal_foliar"
 HOJA_BALANCE = "ind_balan"
 HOJA_REQUERIMIENTO = "reque_fert"
+HOJA_OXIDO = "reque_ox"
+HOJA_RENDIMIENTO = "reque_rend"
 HOJA_INSTRUCCIONES = "instrucciones"
 
 # Nombres alternativos aceptados, por si el usuario los escribe distinto
@@ -40,6 +42,10 @@ ALIAS_HOJAS = {
                           "índice de balance", "balance"],
     HOJA_REQUERIMIENTO:  ["reque_fert", "requefert", "requerimiento",
                           "requerimiento_fertilizantes", "fertilizantes"],
+    HOJA_OXIDO:          ["reque_ox", "requeox", "requerimiento_oxido",
+                          "requerimiento en oxido", "oxido", "oxidos"],
+    HOJA_RENDIMIENTO:    ["reque_rend", "requerend", "requerimiento_rendimiento",
+                          "requerimiento rendimiento", "rendimiento"],
 }
 
 # ------------------------------------------------------------
@@ -92,6 +98,8 @@ HOJAS_DATOS = {
     "foliar":        (HOJA_FOLIAR,        "fert_foliar",        "Análisis foliar"),
     "balance":       (HOJA_BALANCE,       "fert_balance",       "Índice de balance"),
     "requerimiento": (HOJA_REQUERIMIENTO, "fert_requerimiento", "Fertilizantes requeridos"),
+    "oxido":         (HOJA_OXIDO,         "fert_oxido",         "Requerimiento en óxido"),
+    "rendimiento":   (HOJA_RENDIMIENTO,   "fert_rendimiento",   "Requerimiento para el rendimiento"),
 }
 
 # ------------------------------------------------------------
@@ -99,12 +107,27 @@ HOJAS_DATOS = {
 # ordenadas de forma natural y no alfabética.
 # Los que no estén en la lista van al final, en el orden del Excel.
 # ------------------------------------------------------------
+# Nutrientes en forma elemental: los que llevan las hojas anal_foliar,
+# ind_balan y reque_rend.
 ORDEN_NUTRIENTES = ["N", "P", "K", "Ca", "Mg", "Cl", "S",
                     "B", "Fe", "Cu", "Mn", "Zn"]
 
+# Formas de óxido, como se comercializan los fertilizantes.
+# Van en la hoja reque_ox. Se usan SOLO para ordenar, no para armar
+# las columnas de las otras hojas.
+ORDEN_OXIDOS = ["N", "P2O5", "K2O", "CaO", "MgO", "S", "B2O3", "SO3", "ZnO"]
+
 
 def ordenar_nutrientes(claves) -> list[str]:
-    """Ordena por la secuencia agronómica habitual."""
-    conocidos = [n for n in ORDEN_NUTRIENTES if n in claves]
-    otros = sorted(k for k in claves if k not in ORDEN_NUTRIENTES)
+    """
+    Ordena por la secuencia agronómica habitual.
+
+    Cubre tanto la forma elemental (N, P, K...) como la de óxido
+    (P2O5, K2O...), así sirve para las cinco hojas de datos.
+    Lo que no reconoce va al final, en orden alfabético.
+    """
+    referencia = ORDEN_NUTRIENTES + [o for o in ORDEN_OXIDOS
+                                     if o not in ORDEN_NUTRIENTES]
+    conocidos = [n for n in referencia if n in claves]
+    otros = sorted(k for k in claves if k not in referencia)
     return conocidos + otros

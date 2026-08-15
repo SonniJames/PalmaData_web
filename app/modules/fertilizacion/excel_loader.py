@@ -318,6 +318,21 @@ def generar_formato(identificaciones: list[str] | None = None,
         ("Puedes agregar, quitar o cambiar fertilizantes entre campañas:", ""),
         ("el sistema los detecta solos y los precios aparecen en Parámetros.", ""),
         ("", ""),
+        ("Hoja  reque_ox", "sub"),
+        ("Requerimiento expresado en forma de ÓXIDO, que es como se", ""),
+        ("comercializan los fertilizantes: P2O5, K2O, CaO, MgO, B2O3.", ""),
+        ("Una columna por elemento. Alimenta la pantalla Requerimiento en óxido.", ""),
+        ("", ""),
+        ("Hoja  reque_rend", "sub"),
+        ("REQUERIMIENTO TOTAL PARA EL RENDIMIENTO ESPERADO.", ""),
+        ("Nutrientes en forma elemental (N, P, K, Ca, Mg, S, B, Zn) que hacen", ""),
+        ("falta para alcanzar la cosecha esperada de cada lote.", ""),
+        ("Alimenta la pantalla Requerimiento para rendimiento.", ""),
+        ("", ""),
+        ("En ambas, como en todas las hojas, la columna A lleva la", ""),
+        ("identificación del lote y los elementos pueden cambiar entre", ""),
+        ("campañas: el sistema los detecta solos.", ""),
+        ("", ""),
         ("Cómo cargar", "sub"),
         ("1. Copia tus datos y pégalos aquí con Pegado especial → Valores.", ""),
         ("2. No cambies los nombres de las hojas.", ""),
@@ -375,6 +390,22 @@ def generar_formato(identificaciones: list[str] | None = None,
     _estilo_cabecera(ws, len(ferts) + 1, {0: 34})
     for i in range(len(ferts)):
         ws.column_dimensions[get_column_letter(i + 2)].width = 20
+
+    # ---------- reque_ox ----------
+    ws = wb.create_sheet(F.HOJA_OXIDO)
+    oxidos = ["N", "P2O5", "K2O", "CaO", "MgO", "S", "B2O3"]
+    ws.append(["identificacion"] + oxidos)
+    for ident in idents:
+        ws.append([ident])
+    _estilo_cabecera(ws, len(oxidos) + 1, {0: 34})
+
+    # ---------- reque_rend ----------
+    ws = wb.create_sheet(F.HOJA_RENDIMIENTO)
+    elementos = ["N", "P", "K", "Ca", "Mg", "S", "B", "Zn"]
+    ws.append(["identificacion"] + elementos)
+    for ident in idents:
+        ws.append([ident])
+    _estilo_cabecera(ws, len(elementos) + 1, {0: 34})
 
     buf = BytesIO()
     wb.save(buf)

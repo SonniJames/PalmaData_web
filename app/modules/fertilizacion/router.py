@@ -10,8 +10,8 @@ from fastapi.responses import Response
 
 from ...core import db, security
 from . import repository as repo
-from .calc import (aplicaciones, comparar_campanas, consolidar, preparar_lote,
-                   resumen_nutricional)
+from .calc import (analisis_elementos, aplicaciones, comparar_campanas,
+                   consolidar, preparar_lote, resumen_nutricional)
 from .excel_loader import generar_formato, leer_excel
 from .formato import HOJAS_DATOS, ordenar_nutrientes
 from .params import (CAMPOS, ETIQUETAS, asegurar_precios, flete_de,
@@ -50,6 +50,19 @@ def _empresa(empresa_id: int | None) -> int:
         raise HTTPException(400, "No hay empresas registradas. "
                                  "Ejecuta deploy/06_fert_empresas.sql")
     return e["id"]
+
+
+def _resumen_bloque(lotes: list[dict], bloque: str) -> dict:
+    """Totales de un bloque JSONB, para las tarjetas del Resumen."""
+    r = analisis_elementos(lotes, bloque, top=5)
+    if r.get("vacio"):
+        return {"vacio": True}
+    return {"vacio": False,
+            "elementos": r["elementos"],
+            "por_elemento": r["por_elemento"],
+            "total": r["total"]["total"],
+            "palmas": r["total"]["palmas"],
+            "hectareas": r["total"]["hectareas"]}
 
 
 def _cargar(empresa_id: int, anio: int, zona=None, sector=None,
@@ -381,6 +394,8 @@ def get_dashboard(anio: int = Query(...), empresa_id: int | None = Query(None),
                        "cantidad": l["costos"]["cantidad"],
                        "costo": l["costos"]["costo_total"]} for l in top],
         "sin_precio": [f for f in ferts if not precios.get(f)],
+        "oxido": _resumen_bloque(lotes, "oxido"),
+        "rendimiento": _resumen_bloque(lotes, "rendimiento"),
     }
 
 
@@ -408,6 +423,45 @@ def get_aplicaciones(anio: int = Query(...),
 
     return {"ok": True, "anio": anio, "empresa_id": eid, "vacio": False,
             **aplicaciones(lotes, ferts, top),
+            **repo.filtros_de_campana(eid, anio)}
+
+
+@router.get("/oxido")
+def get_oxido(anio: int = Query(...), empresa_id: int | None = Query(None),
+              zona: str | None = Query(None), sector: str | None = Query(None),
+              rango_edad: str | None = Query(None),
+              identificacion: str | None = Query(None),
+              uma: int | None = Query(None),
+              top: int = Query(15, ge=5, le=50), _=Depends(sesion)):
+    """Requerimiento en óxido (P2O5, K2O, CaO, MgO...) por lote."""
+    eid = _empresa(empresa_id)
+    lotes, _p, _f = _cargar(eid, anio, zona, sector, rango_edad,
+                            identificacion, uma)
+    if not lotes:
+        return {"ok": True, "anio": anio, "empresa_id": eid, "vacio": True,
+                **repo.filtros_de_campana(eid, anio)}
+    return {"ok": True, "anio": anio, "empresa_id": eid,
+            **analisis_elementos(lotes, "oxido", top),
+            **repo.filtros_de_campana(eid, anio)}
+
+
+@router.get("/rendimiento")
+def get_rendimiento(anio: int = Query(...), empresa_id: int | None = Query(None),
+                    zona: str | None = Query(None),
+                    sector: str | None = Query(None),
+                    rango_edad: str | None = Query(None),
+                    identificacion: str | None = Query(None),
+                    uma: int | None = Query(None),
+                    top: int = Query(15, ge=5, le=50), _=Depends(sesion)):
+    """Requerimiento total para el rendimiento esperado, por lote."""
+    eid = _empresa(empresa_id)
+    lotes, _p, _f = _cargar(eid, anio, zona, sector, rango_edad,
+                            identificacion, uma)
+    if not lotes:
+        return {"ok": True, "anio": anio, "empresa_id": eid, "vacio": True,
+                **repo.filtros_de_campana(eid, anio)}
+    return {"ok": True, "anio": anio, "empresa_id": eid,
+            **analisis_elementos(lotes, "rendimiento", top),
             **repo.filtros_de_campana(eid, anio)}
 
 

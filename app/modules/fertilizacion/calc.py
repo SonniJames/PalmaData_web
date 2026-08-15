@@ -340,3 +340,123 @@ def aplicaciones(lotes: list[dict], fertilizantes: list[str],
         "matriz_sector": matriz(por_sector),
         "fertilizantes": fertilizantes,
     }
+
+
+# ============================================================
+#  REQUERIMIENTO EN ÓXIDO Y PARA EL RENDIMIENTO
+#  Ambos bloques son "elemento -> cantidad por lote", así que
+#  comparten el mismo análisis. El bloque se elige al llamar.
+# ============================================================
+
+def analisis_elementos(lotes: list[dict], bloque: str,
+                       top: int = 15) -> dict:
+    """
+    Analiza un bloque de nutrientes por lote.
+
+    `bloque` es 'oxido' o 'rendimiento' (la clave del dict del lote).
+    Los elementos salen de los datos, no de una lista fija: si una
+    campaña usa otros, entran solos.
+
+    Devuelve totales, promedios, por sector, por zona, por rango de
+    edad, la matriz elemento x grupo y los lotes que más requieren.
+    """
+    claves = {k for l in lotes for k in (l.get(bloque) or {})}
+    if not claves:
+        return {"vacio": True, "elementos": []}
+
+    elementos = ordenar_nutrientes(claves)
+
+    def totales(items: list[dict]) -> dict:
+        palmas = sum(int(num(l.get("palmas"))) for l in items)
+        hectareas = sum(num(l.get("hectareas")) for l in items)
+        tons = sum(num(l.get("tons")) for l in items)
+        por_elem = {e: 0.0 for e in elementos}
+        con_dato = {e: 0 for e in elementos}
+        for l in items:
+            datos = l.get(bloque) or {}
+            for e in elementos:
+                v = datos.get(e)
+                if v is not None:
+                    por_elem[e] += num(v)
+                    con_dato[e] += 1
+        return {
+            "lotes": len(items),
+            "palmas": palmas,
+            "hectareas": round(hectareas, 2),
+            "tons_esperada": round(tons, 2),
+            "elementos": {e: round(por_elem[e], 4) for e in elementos},
+            "promedios": {e: round(por_elem[e] / con_dato[e], 4)
+                          if con_dato[e] else 0 for e in elementos},
+            "total": round(sum(por_elem.values()), 4),
+        }
+
+    total = totales(lotes)
+
+    # --- Resumen por elemento ---
+    tt = total["total"] or 1
+    palmas = total["palmas"] or 1
+    ha = total["hectareas"]
+    por_elemento = []
+    for e in elementos:
+        v = total["elementos"][e]
+        por_elemento.append({
+            "elemento": e,
+            "total": v,
+            "promedio": total["promedios"][e],
+            "porcentaje": round(v / tt * 100, 1),
+            "por_palma": round(v / palmas, 6),
+            "por_hectarea": round(v / ha, 4) if ha else 0,
+        })
+
+    # --- Agrupaciones ---
+    def agrupar(campo: str) -> list[dict]:
+        grupos: dict[str, list] = {}
+        for l in lotes:
+            grupos.setdefault(l.get(campo) or "Sin dato", []).append(l)
+        salida = [{"grupo": clave, **totales(items)}
+                  for clave, items in grupos.items()]
+        return sorted(salida, key=lambda x: -x["total"])
+
+    por_sector = agrupar("sector")
+    por_zona = agrupar("zona")
+    por_edad = agrupar("rango_edad")
+
+    # --- Lotes que más requieren ---
+    ranking = []
+    for l in lotes:
+        datos = l.get(bloque) or {}
+        suma = sum(num(v) for v in datos.values())
+        p = int(num(l.get("palmas")))
+        ranking.append({
+            "identificacion": l.get("identificacion"),
+            "uma": l.get("uma"), "zona": l.get("zona"),
+            "sector": l.get("sector"), "palmas": p,
+            "tons": num(l.get("tons")),
+            "total": round(suma, 4),
+            "por_palma": round(suma / p, 6) if p else 0,
+            "valores": {e: datos.get(e) for e in elementos},
+        })
+    ranking.sort(key=lambda x: -x["total"])
+
+    def matriz(grupos: list[dict]) -> dict:
+        claves_g = [g["grupo"] for g in grupos]
+        filas = []
+        for e in elementos:
+            valores = {g["grupo"]: g["elementos"].get(e, 0) for g in grupos}
+            filas.append({"elemento": e, "valores": valores,
+                          "total": round(sum(valores.values()), 4)})
+        return {"grupos": claves_g, "filas": filas,
+                "totales": {g["grupo"]: g["total"] for g in grupos}}
+
+    return {
+        "vacio": False,
+        "elementos": elementos,
+        "total": total,
+        "por_elemento": por_elemento,
+        "por_sector": por_sector,
+        "por_zona": por_zona,
+        "por_edad": por_edad,
+        "matriz_sector": matriz(por_sector),
+        "matriz_zona": matriz(por_zona),
+        "top_lotes": ranking[:top],
+    }

@@ -34,6 +34,8 @@ MODULOS = [
             {"id": "diagnostico", "nombre": "Diagnóstico"},
             {"id": "balance",     "nombre": "Índice de balance"},
             {"id": "aplicaciones","nombre": "Aplicaciones"},
+            {"id": "oxido",       "nombre": "Requerimiento en óxido"},
+            {"id": "rendimiento", "nombre": "Requerimiento para rendimiento"},
             {"id": "plan",        "nombre": "Plan y costos"},
             {"id": "parametros",  "nombre": "Parámetros"},
             {"id": "datos",       "nombre": "Cargar datos"},
