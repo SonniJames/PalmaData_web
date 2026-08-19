@@ -12,7 +12,8 @@ Casos que trae:
     entrada y salida  -> jornada calculada
     solo entrada      -> a revisar (falta la salida)
     solo salida       -> a revisar (falta la entrada)
-    ninguna           -> sin registro, no se guarda
+    ninguna           -> sin registro: el día no se guarda, pero la
+                         persona sí queda en el padrón del huellero
 
 El resultado sale con la MISMA estructura que el formato 1, así que
 todo lo demás del módulo (base de datos, análisis, pantallas) es
@@ -211,15 +212,18 @@ def leer_excel(contenido: bytes, anio: int, mes: int) -> tuple[dict, list[str]]:
         salida = _hora(celda(fila, "salida"))
         j = jornada_desde_columnas(entrada, salida)
 
-        if j["estado"] == "sin_registro":
-            n_sin += 1
-            continue
-
+        # La persona se registra SIEMPRE, aunque ese día no haya marcado.
+        # Así queda en el padrón del huellero y aparece en el análisis,
+        # igual que en el formato 1. Solo el DÍA sin marcas se omite.
         p = personas.setdefault(codigo, {
             "codigo": codigo, "nombre": nombre,
             "fila_excel": nfila, "dias": {},
         })
         p["nombre"] = nombre        # el último nombre visto manda
+
+        if j["estado"] == "sin_registro":
+            n_sin += 1
+            continue
 
         if f.day in p["dias"]:
             duplicados += 1

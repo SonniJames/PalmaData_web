@@ -248,7 +248,18 @@ def get_analisis(empresa_id: int | None = Query(None),
     filas = repo.listar_marcaciones(eid, anio, mes, dia, trabajador, zid,
                                     departamento)
 
-    resultado = analizar(filas, top)
+    # Padrón completo: los trabajadores registrados en el huellero, para
+    # que la tabla los muestre a todos aunque un día no hayan marcado.
+    # Solo tiene sentido cuando NO se está buscando a alguien concreto.
+    padron = None
+    if not (trabajador and trabajador.strip()):
+        padron = repo.listar_trabajadores(eid, zid)
+        if departamento and departamento.strip():
+            # Con un supervisor filtrado, el padrón se limita a su gente
+            ids = {f["trabajador_id"] for f in filas}
+            padron = [t for t in padron if t["id"] in ids]
+
+    resultado = analizar(filas, top, padron, un_dia=bool(dia))
     empresa = repo.empresa_por_id(eid)
     zona = repo.zona_por_id(zid) if zid else None
 

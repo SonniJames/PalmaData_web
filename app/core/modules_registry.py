@@ -48,7 +48,7 @@ MODULOS = [
         "activo": True,
         "submodulos": [
             {"id": "analisis", "nombre": "Análisis"},
-            {"id": "revisar",  "nombre": "Días a revisar"},
+            {"id": "revisar",  "nombre": "A revisar"},
             {"id": "datos",    "nombre": "Cargar datos"},
         ],
     },

@@ -72,7 +72,7 @@ function esqueleto(cont) {
     </div>
     <div class="ftabs">
       <button class="ftab" data-tab="analisis">Análisis</button>
-      <button class="ftab" data-tab="revisar">Días a revisar</button>
+      <button class="ftab" data-tab="revisar">A revisar</button>
       <button class="ftab" data-tab="datos">Cargar datos</button>
     </div>
     <div id="aC"></div>`;
@@ -187,7 +187,9 @@ function vistaAnalisis(c) {
   c.innerHTML = `
     <div class="kpis">
       <div class="kpi"><div class="l">Trabajadores</div><div class="v">${n0(t.trabajadores)}</div>
-        <div class="s">${esc(periodoTexto())}</div></div>
+        <div class="s">${t.sin_registro
+          ? `${n0(t.trabajadores - t.sin_registro)} con registro · ${n0(t.sin_registro)} sin marcar`
+          : esc(periodoTexto())}</div></div>
       <div class="kpi"><div class="l">${unDia ? 'Entrada' : 'Entrada promedio'}</div>
         <div class="v">${t.entrada || '—'}</div></div>
       <div class="kpi"><div class="l">${unDia ? 'Salida' : 'Salida promedio'}</div>
@@ -211,8 +213,12 @@ function vistaAnalisis(c) {
     <div class="card">
       <h3>Trabajadores</h3>
       <p class="sub">${unDia
-        ? 'Hora de entrada, salida y jornada del día seleccionado.'
-        : 'Hora promedio de entrada y salida, y duración promedio de la jornada.'}</p>
+        ? 'Hora de entrada, salida y jornada del día seleccionado. Se muestran las horas tal como se marcaron, aunque falte una de las dos.'
+        : 'Hora promedio de entrada y salida, y duración promedio de la jornada.'}
+        ${d.total.sin_registro
+          ? `Aparecen los <strong>${n0(d.total.trabajadores)}</strong> trabajadores del huellero: los
+             <strong>${n0(d.total.sin_registro)}</strong> que no marcaron se muestran atenuados.`
+          : ''}</p>
       <div class="twrap">
         <table class="ft">
           <thead><tr>
@@ -223,7 +229,8 @@ function vistaAnalisis(c) {
             <th class="num">Horas</th>
             <th class="num">Días</th><th class="num">Revisar</th>
           </tr></thead>
-          <tbody>${d.trabajadores.map(x => `<tr>
+          <tbody>${d.trabajadores.map(x => `<tr${x.sin_registro
+              ? ' style="opacity:.55"' : ''}>
             <td class="num">${esc(x.codigo)}</td>
             <td class="ln">${esc(x.nombre)}</td>
             <td>${esc(x.departamento || '—')}</td>
@@ -232,8 +239,10 @@ function vistaAnalisis(c) {
             <td class="num">${x.duracion || '—'}</td>
             <td class="num">${x.horas_promedio ? n2(x.horas_promedio, 2) : '—'}</td>
             <td class="num">${n0(x.dias_calculables)}</td>
-            <td class="num">${x.dias_incompletos
-              ? `<span class="sem sem-bajo">${x.dias_incompletos}</span>` : '—'}</td>
+            <td class="num">${x.sin_registro
+              ? `<span class="sem sem-deficiente">Sin marcar</span>`
+              : (x.dias_incompletos
+                  ? `<span class="sem sem-bajo">${x.dias_incompletos}</span>` : '—')}</td>
           </tr>`).join('')}</tbody>
         </table>
       </div>
@@ -405,7 +414,7 @@ function vistaRevisar(c) {
 
   if (!lista.length) {
     c.innerHTML = `<div class="vacio"><h3>Nada que revisar</h3>
-      <p>Todos los días del período tienen entrada y salida bien marcadas.</p></div>`;
+      <p>Todos los trabajadores del período tienen entrada y salida bien marcadas.</p></div>`;
     return;
   }
 
@@ -424,7 +433,9 @@ function vistaRevisar(c) {
     <div class="card" style="padding:14px 18px">
       <p class="sub" style="margin:0">Días sin jornada calculable: falta la entrada
         o la salida, o las dos marcas quedaron a menos de 30 minutos (suele ser
-        alguien que marcó dos veces al entrar). No entran en los promedios.</p>
+        alguien que marcó dos veces al entrar). Incluye también a quienes
+        <strong>no marcaron nada</strong>: sus celdas venían vacías en el Excel,
+        así que no hay registro que guardar. Ninguno entra en los promedios.</p>
     </div>
 
     <div class="card">
@@ -439,14 +450,14 @@ function vistaRevisar(c) {
             <th class="num">Entrada</th><th class="num">Salida</th>
             <th class="num">Marcas</th><th>Motivo</th></tr></thead>
           <tbody>${lista.map(x => `<tr>
-            <td>${esc(x.fecha)}</td>
+            <td>${esc(x.fecha || '—')}</td>
             <td class="num">${esc(x.codigo)}</td>
             <td class="ln">${esc(x.nombre)}</td>
             <td>${esc(x.departamento || '—')}</td>
             <td class="num">${x.entrada || '—'}</td>
             <td class="num">${x.salida || '—'}</td>
             <td class="num">${x.n_marcas}</td>
-            <td><span class="sem sem-bajo">${esc(x.motivo)}</span></td>
+            <td><span class="sem ${x.sin_registro ? 'sem-deficiente' : 'sem-bajo'}">${esc(x.motivo)}</span></td>
           </tr>`).join('')}</tbody>
         </table>
       </div>
