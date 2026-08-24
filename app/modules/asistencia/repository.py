@@ -7,8 +7,79 @@ Tres tablas: asis_periodo, asis_trabajador, asis_marcacion.
 Las empresas se reciclan de plantacion.fert_empresa.
 """
 import json
+import re
 
 from ...core import db
+
+
+# ============================================================
+#  IDENTIDAD DEL TRABAJADOR
+# ============================================================
+
+def normalizar_codigo(codigo) -> str | None:
+    """
+    Normaliza el código del huellero.
+
+    Los archivos a veces traen ceros delante o decimales sobrantes, y
+    la nómina no: "0031", "31" y "31.0" son el mismo trabajador.
+    Los códigos con letras se dejan tal cual.
+    """
+    if codigo is None:
+        return None
+    v = str(codigo).strip()
+    if not v:
+        return None
+    if re.fullmatch(r"\d+\.0+", v):      # 31.0 -> 31
+        v = v.split(".", 1)[0]
+    if v.isdigit():                        # 0031 -> 31
+        v = v.lstrip("0") or "0"
+    return v
+
+
+def modo_cruce(empresa_id: int) -> str:
+    """
+    Cómo se identifica a un trabajador en esa empresa.
+
+    'codigo'         -> el código del huellero basta (Palmeras de Yarima)
+    'codigo_nombre'  -> hace falta código + nombre porque los códigos
+                        se repiten entre personas (Villa Claudia)
+    """
+    fila = db.fetch_one(
+        "SELECT asis_cruce FROM plantacion.fert_empresa WHERE id = %s",
+        (empresa_id,))
+    return (fila or {}).get("asis_cruce") or "codigo_nombre"
+
+
+def armar_id(modo: str, codigo, nombre) -> str | None:
+    """Construye el id con el que se cruzan nómina y huellero."""
+    cod = normalizar_codigo(codigo)
+    if not cod:
+        return None
+    if modo == "codigo":
+        return cod
+    return f"{cod}_{nombre}" if nombre else cod
+
+
+def normalizar_id_nomina(modo: str, valor, employee_id=None) -> str | None:
+    """
+    Normaliza el id que viene en el Excel de la nómina.
+
+    Con modo 'codigo' se usa el código a secas. Con 'codigo_nombre' se
+    respeta el nombre tal cual, pero se normaliza el prefijo numérico
+    para que "0031_Juan" y "31_Juan" sean el mismo.
+    """
+    if modo == "codigo":
+        return normalizar_codigo(valor or employee_id)
+
+    v = (str(valor).strip() if valor is not None else "")
+    if not v or v.lower() == "none":
+        return None
+    if "_" in v:
+        prefijo, resto = v.split("_", 1)
+        cod = normalizar_codigo(prefijo)
+        return f"{cod}_{resto}" if cod else v
+    return normalizar_codigo(v)
+
 
 
 # ============================================================
@@ -155,6 +226,57 @@ def obtener_o_crear_periodo(cur, empresa_id: int, zona_id: int, anio: int,
             (empresa_id, zona_id, anio, mes, dias, formato, archivo, cargado_por)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
     """, (empresa_id, zona_id, anio, mes, dias, formato, archivo, usuario))
+    return cur.fetchone()["id"]
+
+
+def registrar_en_periodo(cur, periodo_id: int, trabajador_id: int):
+    """
+    Deja constancia de que la persona venía en el archivo de ese
+    período, marcara o no. Es el denominador del % de marcación.
+    """
+    cur.execute("""
+        INSERT INTO plantacion.asis_periodo_trabajador (periodo_id, trabajador_id)
+        VALUES (%s,%s) ON CONFLICT DO NOTHING
+    """, (periodo_id, trabajador_id))
+
+
+def borrar_marcaciones(cur, periodo_id: int) -> int:
+    cur.execute("DELETE FROM plantacion.asis_marcacion WHERE periodo_id=%s",
+                (periodo_id,))
+    return cur.rowcount
+
+
+def eliminar_periodo(empresa_id: int, zona_id: int, anio: int, mes: int) -> bool:
+    with db.get_cursor() as cur:
+        cur.execute("""
+            DELETE FROM plantacion.asis_periodo
+            WHERE empresa_id=%s AND zona_id=%s AND anio=%s AND mes=%s
+        """, (empresa_id, zona_id, anio, mes))
+        return cur.rowcount > 0
+
+
+# ============================================================
+#  TRABAJADORES
+# ============================================================
+
+def obtener_o_crear_trabajador(cur, empresa_id: int, zona_id: int,
+                               codigo: str, nombre: str,
+                               modo: str = "codigo_nombre") -> int:
+    """
+    La llave es (empresa, id_compuesto), armado según el modo de la
+    empresa: solo el código donde no se repite, código + nombre donde
+    sí. El código se normaliza para que "0031" y "31" sean el mismo.
+    """
+    id_compuesto = armar_id(modo, codigo, nombre)
+    cur.execute("""
+        INSERT INTO plantacion.asis_trabajador
+            (empresa_id, zona_id, codigo, nombre, id_compuesto)
+        VALUES (%s,%s,%s,%s,%s)
+        ON CONFLICT (empresa_id, id_compuesto)
+            DO UPDATE SET nombre = EXCLUDED.nombre,
+                          zona_id = EXCLUDED.zona_id
+        RETURNING id
+    """, (empresa_id, zona_id, str(codigo), nombre, id_compuesto))
     return cur.fetchone()["id"]
 
 
@@ -399,19 +521,32 @@ def reemplazar_nomina(cur, registros: list[dict],
     cur.execute("DELETE FROM plantacion.asis_trabajador_activo")
     borrados = cur.rowcount
 
+    modos: dict = {}
     insertados = 0
+    sin_id = 0
+
     for r in registros:
+        eid = r["empresa_id"]
+        if eid not in modos:
+            modos[eid] = modo_cruce(eid)
+        idc = normalizar_id_nomina(modos[eid], r.get("id_compuesto"),
+                                   r.get("employee_id"))
+        if not idc:
+            sin_id += 1
+
         cur.execute("""
             INSERT INTO plantacion.asis_trabajador_activo
                 (empresa_id, codigo, nombre, employee_id, id_compuesto,
                  supervisor, estado, fila_excel, archivo, cargado_por)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-        """, (r["empresa_id"], r["codigo"], r["nombre"], r.get("employee_id"),
-              r.get("id_compuesto"), r.get("supervisor"), r.get("estado", 1),
+            ON CONFLICT (empresa_id, id_compuesto) DO NOTHING
+        """, (eid, r["codigo"], r["nombre"], r.get("employee_id"),
+              idc, r.get("supervisor"), r.get("estado", 1),
               r.get("fila_excel"), archivo, usuario))
         insertados += 1
 
-    return {"borrados": borrados, "insertados": insertados}
+    return {"borrados": borrados, "insertados": insertados,
+            "sin_id": sin_id, "modos": modos}
 
 
 def resumen_nomina() -> list[dict]:

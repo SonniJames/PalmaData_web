@@ -211,9 +211,10 @@ async def post_carga(
         if reemplazar:
             borradas = repo.borrar_marcaciones(cur, periodo_id)
 
+        modo = repo.modo_cruce(empresa_id)
         for t in trabajadores:
             tid = repo.obtener_o_crear_trabajador(
-                cur, empresa_id, zid, t["codigo"], t["nombre"])
+                cur, empresa_id, zid, t["codigo"], t["nombre"], modo)
             for d in t["dias"]:
                 repo.guardar_marcacion(cur, periodo_id, tid, d)
                 guardadas += 1
@@ -228,7 +229,7 @@ async def post_carga(
             "archivo": archivo.filename, "dias_mes": total_dias,
             "trabajadores": len(trabajadores),
             "marcaciones": guardadas, "reemplazadas": borradas,
-            "cruce": cruce,
+            "cruce": cruce, "modo_cruce": modo,
             "resumen": resultado.get("resumen", {}),
             "advertencias": advertencias}
 
