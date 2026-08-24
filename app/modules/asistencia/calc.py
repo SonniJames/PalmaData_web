@@ -328,7 +328,10 @@ def analizar_completos(filas: list[dict], padron: list[dict],
     prom_dur = _promedio(duraciones)
     dias = sorted({str(f["fecha"]) for f in filas})
     n_padron = len(padron)
-    esperados = n_padron * len(dias)
+    # Al menos un día: si se filtra una fecha sin marcaciones, el
+    # denominador seguiría siendo el número de trabajadores activos.
+    n_dias = max(len(dias), 1)
+    esperados = n_padron * n_dias
 
     total = {
         "trabajadores_activos": n_padron,
@@ -434,7 +437,11 @@ def analizar_revisar(filas: list[dict], padron: list[dict],
     padrón con quienes sí tienen registro.
     """
     incompletos = [f for f in filas if f.get("estado") == "incompleta"]
-    con_registro = {f["trabajador_id"] for f in filas}
+
+    # Quién tiene ALGÚN registro. Se cruza por id_compuesto, que es la
+    # llave común entre la nómina y el huellero.
+    con_registro = {f.get("id_compuesto") for f in filas if f.get("id_compuesto")}
+    con_registro |= {f.get("trabajador_id") for f in filas}
 
     revisar = []
     for f in incompletos:
@@ -451,7 +458,9 @@ def analizar_revisar(filas: list[dict], padron: list[dict],
         })
 
     fecha_dia = str(filas[0].get("fecha")) if (un_dia and filas) else None
-    ausentes = [t for t in padron if t["trabajador_id"] not in con_registro]
+    ausentes = [t for t in padron
+                if t.get("id_compuesto") not in con_registro
+                and t.get("trabajador_id") not in con_registro]
     for t in ausentes:
         revisar.append({
             "trabajador_id": t["trabajador_id"],
@@ -460,7 +469,10 @@ def analizar_revisar(filas: list[dict], padron: list[dict],
             "fecha": fecha_dia, "dia": None,
             "entrada": None, "salida": None, "n_marcas": 0,
             "sin_registro": True,
-            "motivo": "No marcó" if un_dia else "Sin registros en el período",
+            "motivo": ("No marcó" if un_dia
+                       else ("Nunca ha aparecido en un huellero"
+                             if t.get("nunca_en_huellero")
+                             else "Sin registros en el período")),
         })
 
     revisar.sort(key=lambda x: (x["fecha"] or "", x["nombre"] or ""))
@@ -497,7 +509,13 @@ def analizar_revisar(filas: list[dict], padron: list[dict],
 
     completos = [f for f in filas if f.get("estado") == "completo"]
     dias = sorted({str(f["fecha"]) for f in filas})
-    esperados = len(padron) * len(dias) if dias else len(padron)
+    esperados = len(padron) * max(len(dias), 1)
+
+    solo_entrada = sum(1 for x in revisar
+                       if not x["sin_registro"] and x["entrada"] and not x["salida"])
+    solo_salida = sum(1 for x in revisar
+                      if not x["sin_registro"] and x["salida"] and not x["entrada"])
+    muy_juntas = len(incompletos) - solo_entrada - solo_salida
 
     return {
         "vacio": not revisar,
@@ -505,12 +523,16 @@ def analizar_revisar(filas: list[dict], padron: list[dict],
             "casos": len(revisar),
             "incompletos": len(incompletos),
             "sin_marcar": len(ausentes),
+            "solo_entrada": solo_entrada,
+            "solo_salida": solo_salida,
+            "otras": max(muy_juntas, 0),
             "trabajadores_activos": len(padron),
             "registros_completos": len(completos),
             "esperados": esperados,
             "pct_sin_marcacion": _pct(len(revisar), esperados),
         },
         "revisar": revisar[:500],
+        "revisar_todos": revisar,
         "total_revisar": len(revisar),
         "por_motivo": [{"motivo": k, "casos": v}
                        for k, v in sorted(conteo.items(), key=lambda x: -x[1])],

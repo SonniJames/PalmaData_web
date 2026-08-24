@@ -204,8 +204,9 @@ function vistaAnalisis(c) {
       <div class="kpi"><div class="l">${unDia ? 'Jornada' : 'Jornada promedio'}</div>
         <div class="v">${t.duracion || '—'}</div>
         <div class="s">${n2(t.horas_promedio, 2)} horas</div></div>
-      <div class="kpi"><div class="l">Horas totales</div>
-        <div class="v">${n0(t.horas_total)}</div></div>
+      <div class="kpi"><div class="l">Marcaron</div>
+        <div class="v">${n0(t.trabajadores_con_jornada)}</div>
+        <div class="s">de ${n0(t.trabajadores_activos)} activos</div></div>
     </div>
 
     <div class="card" style="padding:14px 18px">
@@ -392,16 +393,20 @@ function vistaRevisar(c) {
       <div class="kpi acc"><div class="l">Casos a revisar</div>
         <div class="v" style="color:var(--danger)">${n0(t.casos)}</div>
         <div class="s">${esc(periodoTexto())}</div></div>
-      <div class="kpi"><div class="l">Sin marcar</div>
+      <div class="kpi"><div class="l">No marcó</div>
         <div class="v">${n0(t.sin_marcar)}</div>
-        <div class="s">no registraron nada</div></div>
-      <div class="kpi"><div class="l">Marcación incompleta</div>
-        <div class="v">${n0(t.incompletos)}</div>
-        <div class="s">falta entrada o salida</div></div>
+        <div class="s">ningún registro</div></div>
+      <div class="kpi"><div class="l">Solo entrada</div>
+        <div class="v">${n0(t.solo_entrada)}</div>
+        <div class="s">falta la salida</div></div>
+      <div class="kpi"><div class="l">Solo salida</div>
+        <div class="v">${n0(t.solo_salida)}</div>
+        <div class="s">falta la entrada</div></div>
+      ${t.otras ? `<div class="kpi"><div class="l">Marcas muy juntas</div>
+        <div class="v">${n0(t.otras)}</div>
+        <div class="s">menos de 30 minutos</div></div>` : ''}
       <div class="kpi"><div class="l">Trabajadores activos</div>
         <div class="v">${n0(t.trabajadores_activos)}</div></div>
-      <div class="kpi"><div class="l">Con jornada completa</div>
-        <div class="v">${n0(t.registros_completos)}</div></div>
     </div>
 
     <div class="card" style="padding:14px 18px">

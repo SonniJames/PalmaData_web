@@ -534,32 +534,65 @@ def marcaciones_vista(empresa_id: int, anio=None, mes=None, dia=None,
 def padron_activo(empresa_id: int, anio=None, mes=None,
                   supervisor=None) -> list[dict]:
     """
-    Trabajadores activos que debían marcar en el período.
-    Es el denominador del porcentaje de marcación.
+    Los trabajadores que DEBÍAN marcar: toda la nómina activa de la
+    empresa.
+
+    Es el denominador del porcentaje de marcación y la base de las
+    ausencias. Sale directo de asis_trabajador_activo, no de quiénes
+    aparecieron en los archivos: alguien que no salga en ningún reporte
+    del huellero igual debía marcar, y su ausencia es justamente lo que
+    hay que ver.
     """
     sql = """
-        SELECT DISTINCT ON (p.trabajador_id)
-               p.trabajador_id, p.codigo, p.nombre, p.supervisor, p.id_compuesto
-        FROM plantacion.v_asis_padron p
-        WHERE p.empresa_id = %s
+        SELECT a.id AS activo_id, a.codigo, a.nombre, a.supervisor,
+               a.id_compuesto, a.employee_id,
+               t.id AS trabajador_id
+        FROM plantacion.asis_trabajador_activo a
+        LEFT JOIN plantacion.asis_trabajador t
+               ON t.empresa_id = a.empresa_id
+              AND t.id_compuesto = a.id_compuesto
+        WHERE a.empresa_id = %s AND a.estado = 1
+    """
+    params: list = [empresa_id]
+    if supervisor and str(supervisor).strip():
+        if str(supervisor).strip().lower() in ("sin asignar", "(sin asignar)"):
+            sql += " AND (a.supervisor IS NULL OR a.supervisor = '')"
+        else:
+            sql += " AND a.supervisor = %s"
+            params.append(str(supervisor).strip())
+    sql += " ORDER BY a.nombre"
+
+    filas = db.fetch_all(sql, tuple(params))
+    # Los que nunca aparecieron en un huellero no tienen trabajador_id.
+    # Se les da uno negativo y estable para poder contarlos aparte.
+    for i, f in enumerate(filas, 1):
+        if f.get("trabajador_id") is None:
+            f["trabajador_id"] = -i
+            f["nunca_en_huellero"] = True
+        else:
+            f["nunca_en_huellero"] = False
+    return filas
+
+
+def dias_con_actividad(empresa_id: int, anio=None, mes=None,
+                       dia=None) -> list[str]:
+    """Fechas en las que hubo alguna marcación. Base del denominador."""
+    sql = """
+        SELECT DISTINCT v.fecha FROM plantacion.v_asistencia v
+        WHERE v.empresa_id = %s
     """
     params: list = [empresa_id]
     if anio:
-        sql += " AND p.anio = %s"
+        sql += " AND v.anio = %s"
         params.append(anio)
     if mes:
-        sql += " AND p.mes = %s"
+        sql += " AND v.mes = %s"
         params.append(mes)
-    if supervisor and str(supervisor).strip():
-        if str(supervisor).strip().lower() in ("sin asignar", "(sin asignar)"):
-            sql += " AND (p.supervisor IS NULL OR p.supervisor = '')"
-        else:
-            sql += " AND p.supervisor = %s"
-            params.append(str(supervisor).strip())
-    sql += " ORDER BY p.trabajador_id, p.nombre"
-    filas = db.fetch_all(sql, tuple(params))
-    filas.sort(key=lambda f: (f.get("nombre") or "").lower())
-    return filas
+    if dia:
+        sql += " AND v.dia = %s"
+        params.append(dia)
+    sql += " ORDER BY v.fecha"
+    return [str(f["fecha"]) for f in db.fetch_all(sql, tuple(params))]
 
 
 def anios_vista(empresa_id: int) -> list[int]:

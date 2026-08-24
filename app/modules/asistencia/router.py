@@ -317,6 +317,25 @@ def get_revisar(empresa_id: int | None = Query(None),
 #  DESCARGAS
 # ============================================================
 
+def _nombre_archivo(base: str, empresa, anio, mes, dia) -> str:
+    """casos_a_revisar_palmeras_de_yarima_082026.xlsx"""
+    import re
+    partes = [base]
+    if empresa:
+        limpio = re.sub(r"[^a-z0-9]+", "_",
+                        str(empresa).lower()
+                        .replace("á", "a").replace("é", "e").replace("í", "i")
+                        .replace("ó", "o").replace("ú", "u").replace("ñ", "n"))
+        partes.append(limpio.strip("_"))
+    if mes and anio:
+        partes.append(f"{int(mes):02d}{anio}")
+    elif anio:
+        partes.append(str(anio))
+    if dia:
+        partes.append(f"dia{int(dia):02d}")
+    return "_".join(p for p in partes if p) + ".xlsx"
+
+
 def _texto_filtros(empresa, anio, mes, dia, supervisor, trabajador) -> str:
     partes = [f"Empresa: {empresa or 'todas'}"]
     partes.append(f"Año: {anio or 'todos'}")
@@ -357,13 +376,14 @@ def get_analisis_excel(empresa_id: int | None = Query(None),
             round(minutos / 60, 2) if minutos is not None else None,
         ])
 
+    nombre_emp = empresa["nombre"] if empresa else None
     contenido = nomina.exportar_tabla(
         "asistencia", columnas, datos,
-        _texto_filtros(empresa["nombre"] if empresa else None,
-                       anio, mes, dia, supervisor, trabajador))
+        _texto_filtros(nombre_emp, anio, mes, dia, supervisor, trabajador))
+    archivo = _nombre_archivo("asistencia", nombre_emp, anio, mes, dia)
     return Response(content=contenido, media_type=XLSX,
                     headers={"Content-Disposition":
-                             'attachment; filename="asistencia.xlsx"'})
+                             f'attachment; filename="{archivo}"'})
 
 
 @router.get("/revisar/excel")
@@ -380,20 +400,21 @@ def get_revisar_excel(empresa_id: int | None = Query(None),
     padron = repo.padron_activo(eid, anio, mes, supervisor)
     empresa = repo.empresa_por_id(eid)
 
-    r = analizar_revisar(filas, padron, un_dia=bool(dia))
+    r = analizar_revisar(filas, padron, un_dia=bool(dia), top=50)
     columnas = ["Código", "Nombre", "Supervisor", "Fecha",
                 "Hora inicio", "Hora fin", "Situación"]
     datos = [[x.get("codigo"), x.get("nombre"), x.get("supervisor"),
               x.get("fecha"), x.get("entrada"), x.get("salida"),
-              x.get("motivo")] for x in r["revisar"]]
+              x.get("motivo")] for x in r["revisar_todos"]]
 
+    nombre_emp = empresa["nombre"] if empresa else None
     contenido = nomina.exportar_tabla(
         "casos a revisar", columnas, datos,
-        _texto_filtros(empresa["nombre"] if empresa else None,
-                       anio, mes, dia, supervisor, trabajador))
+        _texto_filtros(nombre_emp, anio, mes, dia, supervisor, trabajador))
+    archivo = _nombre_archivo("casos_a_revisar", nombre_emp, anio, mes, dia)
     return Response(content=contenido, media_type=XLSX,
                     headers={"Content-Disposition":
-                             'attachment; filename="casos_a_revisar.xlsx"'})
+                             f'attachment; filename="{archivo}"'})
 
 
 # ============================================================
