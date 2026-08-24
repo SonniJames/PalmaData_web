@@ -29,7 +29,7 @@ VERDE = "16412B"
 VERDE2 = "2F7D4F"
 
 COLUMNAS = ["Codigo", "Nombre Del Trabajador", "Employee ID",
-            "estado", "id", "supervisor", "empresa"]
+            "estado", "supervisor", "empresa"]
 
 
 def _norm(texto) -> str:
@@ -51,6 +51,21 @@ def _txt(v):
     return t or None
 
 
+def _codigo_norm(v):
+    """0031, 31 y 31.0 son el mismo código. Igual que en la base de datos."""
+    import re
+    if v is None:
+        return None
+    t = str(v).strip()
+    if not t:
+        return None
+    if re.fullmatch(r"\d+\.0+", t):
+        t = t.split(".", 1)[0]
+    if t.isdigit():
+        t = t.lstrip("0") or "0"
+    return t
+
+
 def _entero(v):
     if v is None:
         return None
@@ -66,7 +81,6 @@ MAPA = {
     "trabajador": "nombre", "nombrecompleto": "nombre",
     "employeeid": "employee_id", "idhuellero": "employee_id",
     "estado": "estado",
-    "id": "id_compuesto", "idcompuesto": "id_compuesto",
     "supervisor": "supervisor", "jefe": "supervisor",
     "empresa": "empresa_id", "empresaid": "empresa_id",
     "idempresa": "empresa_id",
@@ -135,30 +149,29 @@ def leer_nomina(contenido: bytes) -> tuple[list[dict], list[str]]:
         if not codigo or not nombre or not empresa_id:
             continue
 
-        id_compuesto = _txt(reg.get("id_compuesto"))
-        if id_compuesto and id_compuesto.lower() == "none":
-            id_compuesto = None
-        if not id_compuesto:
+        employee_id = _txt(reg.get("employee_id")) or codigo
+        if employee_id and employee_id.lower() == "none":
+            employee_id = None
+        if not employee_id:
             sin_id += 1
+            continue
 
-        # Un id compuesto no puede apuntar a dos personas
-        if id_compuesto:
-            clave = (empresa_id, id_compuesto)
-            if clave in vistos:
-                repetidos += 1
-                advertencias.append(
-                    f"Fila {n}: el id «{id_compuesto}» ya estaba en la empresa "
-                    f"{empresa_id}. Se conserva el primero.")
-                continue
-            vistos.add(clave)
+        # Dentro de una empresa el código identifica a una sola persona
+        clave = (empresa_id, _codigo_norm(employee_id))
+        if clave in vistos:
+            repetidos += 1
+            advertencias.append(
+                f"Fila {n}: el código «{employee_id}» ya estaba en la empresa "
+                f"{empresa_id}. Se conserva el primero.")
+            continue
+        vistos.add(clave)
 
         estado = _entero(reg.get("estado"))
         registros.append({
             "empresa_id": empresa_id,
             "codigo": codigo,
             "nombre": nombre,
-            "employee_id": _txt(reg.get("employee_id")),
-            "id_compuesto": id_compuesto,
+            "employee_id": employee_id,
             "supervisor": _txt(reg.get("supervisor")),
             "estado": 1 if estado is None else estado,
             "fila_excel": n,
@@ -170,9 +183,8 @@ def leer_nomina(contenido: bytes) -> tuple[list[dict], list[str]]:
 
     if sin_id:
         advertencias.append(
-            f"{sin_id} trabajador(es) sin la columna «id» (EmployeeID_Nombre). "
-            f"Se cargan igual, pero no cruzarán con ninguna marcación hasta "
-            f"que se les complete.")
+            f"{sin_id} fila(s) sin Employee ID ni código. Se omitieron: sin "
+            f"código no hay forma de cruzarlas con una marcación.")
 
     empresas = sorted({r["empresa_id"] for r in registros})
     advertencias.insert(0, f"Empresas en el archivo: "
@@ -193,8 +205,8 @@ def generar_formato(registros: list[dict] | None = None) -> bytes:
 
     for r in (registros or []):
         ws.append([r.get("codigo"), r.get("nombre"), r.get("employee_id"),
-                   r.get("estado", 1), r.get("id_compuesto"),
-                   r.get("supervisor"), r.get("empresa_id")])
+                   r.get("estado", 1), r.get("supervisor"),
+                   r.get("empresa_id")])
 
     relleno = PatternFill("solid", fgColor=VERDE)
     for celda in ws[1]:
@@ -203,7 +215,7 @@ def generar_formato(registros: list[dict] | None = None) -> bytes:
         celda.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 26
     for letra, ancho in (("A", 12), ("B", 38), ("C", 14), ("D", 9),
-                         ("E", 30), ("F", 26), ("G", 10)):
+                         ("E", 26), ("F", 10)):
         ws.column_dimensions[letra].width = ancho
     ws.freeze_panes = "A2"
 
@@ -224,32 +236,31 @@ def generar_formato(registros: list[dict] | None = None) -> bytes:
         ("· Nombre Del Trabajador: nombre completo y bien escrito. Obligatorio.", ""),
         ("· Employee ID: el id con el que quedó registrado en el huellero.", ""),
         ("· estado: 1 para los activos.", ""),
-        ("· id: EmployeeID_Nombre, con el nombre TAL COMO viene del huellero.", ""),
         ("· supervisor: el jefe a cargo. Puede ir vacío por ahora.", ""),
         ("· empresa: 1 = Palmeras de Yarima · 2 = Villa Claudia · 3 = CUCÚ", ""),
         ("", ""),
-        ("La columna id es la llave del cruce", "sub"),
-        ("El Employee ID por sí solo no alcanza: se repite entre personas", ""),
-        ("distintas. En Villa Claudia hay dos trabajadores con el ID 163:", ""),
+        ("El cruce es por Employee ID", "sub"),
+        ("Dentro de una empresa los Employee ID no se repiten, así que el", ""),
+        ("código basta para identificar a cada persona.", ""),
         ("", ""),
-        ("   163_Cristian Moreno   ->  Cristian Danilo Moreno Martinez", ""),
-        ("   163_Carlos Gomez      ->  Carlos Gomez", ""),
+        ("Entre empresas sí se repiten: el 103 de Villa Claudia y el 103 de", ""),
+        ("Palmeras de Yarima son personas distintas. Por eso la columna", ""),
+        ("empresa es obligatoria.", ""),
         ("", ""),
-        ("El cruce es EXACTO: el nombre debe coincidir carácter por", ""),
-        ("carácter con el del huellero, incluidos espacios y mayúsculas.", ""),
+        ("Los ceros delante no importan: 0031, 31 y 31.0 son el mismo.", ""),
         ("", ""),
         ("Cómo funciona el proceso", "sub"),
-        ("1. Primero se carga esta tabla. Sin ella no se pueden subir", ""),
-        ("   asistencias: no habría contra qué cruzar.", ""),
-        ("2. Al cargar un archivo del huellero, cada marcación se cruza", ""),
-        ("   contra esta lista y el resultado queda GUARDADO en el registro.", ""),
-        ("3. Si dentro de dos meses alguien sale de la nómina, sus", ""),
-        ("   marcaciones de hoy siguen contando: reflejan lo que pasaba", ""),
-        ("   en ese momento. Solo las nuevas quedarán como inactivas.", ""),
+        ("1. Se carga esta tabla.", ""),
+        ("2. Se cargan los archivos del huellero.", ""),
+        ("3. Se pulsa PROCESAR y el sistema cruza todo.", ""),
         ("", ""),
-        ("Si un trabajador no aparece en los análisis, revisa su columna", ""),
-        ("id: probablemente no coincide con el nombre del huellero.", ""),
-        ("El módulo lista los que no cruzaron para que puedas corregirlos.", ""),
+        ("El orden entre 1 y 2 da igual. Y si más adelante corriges esta", ""),
+        ("tabla, basta volver a subirla y pulsar Procesar: no hay que", ""),
+        ("recargar ninguna asistencia.", ""),
+        ("", ""),
+        ("Si un trabajador no aparece en los análisis, revisa que su", ""),
+        ("Employee ID esté en esta tabla. El módulo lista los que no", ""),
+        ("cruzaron para que puedas agregarlos.", ""),
     ]
     for texto, tipo in lineas:
         guia.append([texto])

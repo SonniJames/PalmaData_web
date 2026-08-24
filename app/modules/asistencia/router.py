@@ -185,15 +185,6 @@ async def post_carga(
     zona = repo.zona_por_id(zid)
 
     lector = formato2.leer_excel if formato == 2 else leer_excel
-    # Sin nómina no hay contra qué cruzar: los datos entrarían todos
-    # como inactivos y no se verían en el análisis.
-    if not repo.hay_nomina(empresa_id):
-        raise HTTPException(400, {
-            "mensaje": f"No hay trabajadores activos cargados para "
-                       f"«{empresa['nombre']}». Carga primero la tabla de "
-                       f"trabajadores en la pestaña Trabajadores activos.",
-            "advertencias": []})
-
     resultado, advertencias = lector(await archivo.read(), anio, mes)
     trabajadores = (resultado or {}).get("trabajadores") or []
     if not trabajadores:
@@ -211,16 +202,13 @@ async def post_carga(
         if reemplazar:
             borradas = repo.borrar_marcaciones(cur, periodo_id)
 
-        modo = repo.modo_cruce(empresa_id)
         for t in trabajadores:
             tid = repo.obtener_o_crear_trabajador(
-                cur, empresa_id, zid, t["codigo"], t["nombre"], modo)
+                cur, empresa_id, zid, t["codigo"], t["nombre"])
             for d in t["dias"]:
                 repo.guardar_marcacion(cur, periodo_id, tid, d)
                 guardadas += 1
 
-        # Congelar el cruce contra la nómina de ESTE momento
-        cruce = repo.cruzar_periodo(cur, periodo_id)
 
     return {"ok": True, "anio": anio, "mes": mes,
             "mes_nombre": nombre_mes(mes), "formato": formato,
@@ -229,7 +217,7 @@ async def post_carga(
             "archivo": archivo.filename, "dias_mes": total_dias,
             "trabajadores": len(trabajadores),
             "marcaciones": guardadas, "reemplazadas": borradas,
-            "cruce": cruce, "modo_cruce": modo,
+
             "resumen": resultado.get("resumen", {}),
             "advertencias": advertencias}
 
@@ -281,7 +269,8 @@ def get_analisis(empresa_id: int | None = Query(None),
             "mes_nombre": nombre_mes(mes) if mes else None,
             "supervisor": supervisor,
             **analizar_completos(filas, padron, top),
-            **_contexto(eid, anio, mes, dia, supervisor)}
+            **_contexto(eid, anio, mes, dia, supervisor),
+            "hay_marcaciones": repo.hay_marcaciones(eid)}
 
 
 @router.get("/revisar")
@@ -456,6 +445,22 @@ async def post_nomina(archivo: UploadFile = File(...), usuario=Depends(sesion)):
     return {"ok": True, "archivo": archivo.filename, **r,
             "resumen": repo.resumen_nomina(),
             "advertencias": advertencias}
+
+
+@router.post("/procesar")
+def post_procesar(datos: dict = Body(default={}), _=Depends(sesion)):
+    """
+    Cruza todas las marcaciones contra la nómina vigente.
+
+    Es el botón «Procesar». Se puede correr las veces que haga falta:
+    cada vez refleja la nómina de ese momento, así que corregir la
+    lista de trabajadores y volver a procesar deja los análisis al día
+    sin recargar ninguna asistencia.
+    """
+    empresa_id = datos.get("empresa_id")
+    resultado = repo.procesar(int(empresa_id) if empresa_id else None)
+    return {"ok": True, "resultado": resultado,
+            "nomina": repo.resumen_nomina()}
 
 
 @router.get("/nomina/sin-cruzar")

@@ -36,51 +36,6 @@ def normalizar_codigo(codigo) -> str | None:
     return v
 
 
-def modo_cruce(empresa_id: int) -> str:
-    """
-    Cómo se identifica a un trabajador en esa empresa.
-
-    'codigo'         -> el código del huellero basta (Palmeras de Yarima)
-    'codigo_nombre'  -> hace falta código + nombre porque los códigos
-                        se repiten entre personas (Villa Claudia)
-    """
-    fila = db.fetch_one(
-        "SELECT asis_cruce FROM plantacion.fert_empresa WHERE id = %s",
-        (empresa_id,))
-    return (fila or {}).get("asis_cruce") or "codigo_nombre"
-
-
-def armar_id(modo: str, codigo, nombre) -> str | None:
-    """Construye el id con el que se cruzan nómina y huellero."""
-    cod = normalizar_codigo(codigo)
-    if not cod:
-        return None
-    if modo == "codigo":
-        return cod
-    return f"{cod}_{nombre}" if nombre else cod
-
-
-def normalizar_id_nomina(modo: str, valor, employee_id=None) -> str | None:
-    """
-    Normaliza el id que viene en el Excel de la nómina.
-
-    Con modo 'codigo' se usa el código a secas. Con 'codigo_nombre' se
-    respeta el nombre tal cual, pero se normaliza el prefijo numérico
-    para que "0031_Juan" y "31_Juan" sean el mismo.
-    """
-    if modo == "codigo":
-        return normalizar_codigo(valor or employee_id)
-
-    v = (str(valor).strip() if valor is not None else "")
-    if not v or v.lower() == "none":
-        return None
-    if "_" in v:
-        prefijo, resto = v.split("_", 1)
-        cod = normalizar_codigo(prefijo)
-        return f"{cod}_{resto}" if cod else v
-    return normalizar_codigo(v)
-
-
 
 # ============================================================
 #  EMPRESAS · se reutiliza el catálogo de fertilización
@@ -249,211 +204,26 @@ def eliminar_periodo(empresa_id: int, zona_id: int, anio: int, mes: int) -> bool
 # ============================================================
 
 def obtener_o_crear_trabajador(cur, empresa_id: int, zona_id: int,
-                               codigo: str, nombre: str,
-                               modo: str = "codigo_nombre") -> int:
+                               codigo: str, nombre: str) -> int:
     """
-    La llave es (empresa, id_compuesto), armado según el modo de la
-    empresa: solo el código donde no se repite, código + nombre donde
-    sí. El código se normaliza para que "0031" y "31" sean el mismo.
+    La llave es (empresa, código normalizado).
+
+    Dentro de una empresa los Employee ID no se repiten, así que el
+    código basta. Entre empresas sí se repiten —el 103 de AVC y el 103
+    de PDY son personas distintas— y por eso la empresa forma parte
+    de la llave.
     """
-    id_compuesto = armar_id(modo, codigo, nombre)
+    cod = normalizar_codigo(codigo)
     cur.execute("""
         INSERT INTO plantacion.asis_trabajador
-            (empresa_id, zona_id, codigo, nombre, id_compuesto)
+            (empresa_id, zona_id, codigo, nombre, cod_norm)
         VALUES (%s,%s,%s,%s,%s)
-        ON CONFLICT (empresa_id, id_compuesto)
+        ON CONFLICT (empresa_id, cod_norm)
             DO UPDATE SET nombre = EXCLUDED.nombre,
                           zona_id = EXCLUDED.zona_id
         RETURNING id
-    """, (empresa_id, zona_id, str(codigo), nombre, id_compuesto))
+    """, (empresa_id, zona_id, str(codigo), nombre, cod))
     return cur.fetchone()["id"]
-
-
-# ============================================================
-#  MARCACIONES
-# ============================================================
-
-_SQL_MARCACION = """
-    INSERT INTO plantacion.asis_marcacion
-        (periodo_id, trabajador_id, fecha, dia, entrada, salida,
-         minutos, estado, n_marcas, marcas, departamento)
-    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-    ON CONFLICT (periodo_id, trabajador_id, dia) DO UPDATE SET
-        fecha=EXCLUDED.fecha, entrada=EXCLUDED.entrada,
-        salida=EXCLUDED.salida, minutos=EXCLUDED.minutos,
-        estado=EXCLUDED.estado, n_marcas=EXCLUDED.n_marcas,
-        marcas=EXCLUDED.marcas, departamento=EXCLUDED.departamento
-"""
-
-
-def guardar_marcacion(cur, periodo_id: int, trabajador_id: int, d: dict):
-    cur.execute(_SQL_MARCACION, (
-        periodo_id, trabajador_id, d["fecha"], d["dia"],
-        d.get("entrada"), d.get("salida"), d.get("minutos"),
-        d.get("estado", "completo"), d.get("n_marcas", 0),
-        json.dumps(d.get("marcas") or []), d.get("departamento"),
-    ))
-
-
-_SELECT_MARCACIONES = """
-    SELECT m.id, m.fecha, m.dia, m.entrada, m.salida, m.minutos,
-           m.estado, m.n_marcas, m.departamento,
-           t.id AS trabajador_id, t.codigo, t.nombre,
-           p.anio, p.mes, p.formato, p.empresa_id, p.zona_id,
-           e.nombre AS empresa, z.nombre AS zona
-    FROM plantacion.asis_marcacion m
-    JOIN plantacion.asis_periodo p    ON p.id = m.periodo_id
-    JOIN plantacion.asis_trabajador t ON t.id = m.trabajador_id
-    JOIN plantacion.fert_empresa e    ON e.id = p.empresa_id
-    JOIN plantacion.asis_zona z       ON z.id = p.zona_id
-"""
-
-
-def listar_marcaciones(empresa_id: int | None = None, anio: int | None = None,
-                       mes: int | None = None, dia: int | None = None,
-                       trabajador: str | None = None,
-                       zona_id: int | None = None,
-                       departamento: str | None = None) -> list[dict]:
-    """
-    Marcaciones filtradas. Todos los filtros son opcionales:
-    sin ninguno devuelve todo el histórico de la empresa.
-    """
-    sql = _SELECT_MARCACIONES + " WHERE 1=1"
-    params: list = []
-    if empresa_id:
-        sql += " AND p.empresa_id = %s"
-        params.append(empresa_id)
-    if zona_id:
-        sql += " AND p.zona_id = %s"
-        params.append(zona_id)
-    if anio:
-        sql += " AND p.anio = %s"
-        params.append(anio)
-    if mes:
-        sql += " AND p.mes = %s"
-        params.append(mes)
-    if dia:
-        sql += " AND m.dia = %s"
-        params.append(dia)
-    if trabajador and trabajador.strip():
-        sql += " AND (t.nombre ILIKE %s OR t.codigo ILIKE %s)"
-        patron = f"%{trabajador.strip()}%"
-        params.extend([patron, patron])
-    if departamento and departamento.strip():
-        if departamento.strip().lower() in ("sin asignar", "(sin asignar)"):
-            sql += " AND (m.departamento IS NULL OR m.departamento = '')"
-        else:
-            sql += " AND m.departamento = %s"
-            params.append(departamento.strip())
-    sql += " ORDER BY t.nombre, m.fecha"
-    return db.fetch_all(sql, tuple(params))
-
-
-def marcaciones_de_trabajador(trabajador_id: int, anio: int | None = None,
-                              mes: int | None = None) -> list[dict]:
-    sql = _SELECT_MARCACIONES + " WHERE t.id = %s"
-    params: list = [trabajador_id]
-    if anio:
-        sql += " AND p.anio = %s"
-        params.append(anio)
-    if mes:
-        sql += " AND p.mes = %s"
-        params.append(mes)
-    sql += " ORDER BY m.fecha"
-    return db.fetch_all(sql, tuple(params))
-
-
-def departamentos_disponibles(empresa_id: int, zona_id=None,
-                              anio=None, mes=None) -> list[str]:
-    """Supervisores con marcaciones, para el desplegable del filtro."""
-    sql = """
-        SELECT DISTINCT m.departamento AS v
-        FROM plantacion.asis_marcacion m
-        JOIN plantacion.asis_periodo p ON p.id = m.periodo_id
-        WHERE p.empresa_id = %s
-          AND m.departamento IS NOT NULL AND m.departamento <> ''
-    """
-    params: list = [empresa_id]
-    if zona_id:
-        sql += " AND p.zona_id = %s"
-        params.append(zona_id)
-    if anio:
-        sql += " AND p.anio = %s"
-        params.append(anio)
-    if mes:
-        sql += " AND p.mes = %s"
-        params.append(mes)
-    sql += " ORDER BY v"
-    return [f["v"] for f in db.fetch_all(sql, tuple(params))]
-
-
-def dias_con_registro(empresa_id: int, anio: int, mes: int,
-                      zona_id: int | None = None) -> list[int]:
-    """Días del mes que tienen alguna marcación, para el filtro de día."""
-    sql = """
-        SELECT DISTINCT m.dia FROM plantacion.asis_marcacion m
-        JOIN plantacion.asis_periodo p ON p.id = m.periodo_id
-        WHERE p.empresa_id = %s AND p.anio = %s AND p.mes = %s
-    """
-    params: list = [empresa_id, anio, mes]
-    if zona_id:
-        sql += " AND p.zona_id = %s"
-        params.append(zona_id)
-    sql += " ORDER BY m.dia"
-    return [f["dia"] for f in db.fetch_all(sql, tuple(params))]
-
-
-# ============================================================
-#  NÓMINA DE TRABAJADORES ACTIVOS
-#  Una sola tabla para todas las empresas. Cada carga la reemplaza.
-# ============================================================
-
-def hay_nomina(empresa_id: int | None = None) -> int:
-    sql = "SELECT COUNT(*) AS n FROM plantacion.asis_trabajador_activo"
-    params: tuple = ()
-    if empresa_id:
-        sql += " WHERE empresa_id = %s"
-        params = (empresa_id,)
-    return (db.fetch_one(sql, params) or {}).get("n", 0)
-
-
-def reemplazar_nomina(cur, registros: list[dict],
-                      archivo=None, usuario=None) -> dict:
-    """Borra TODA la nómina y carga la nueva. La empresa viene en el archivo."""
-    cur.execute("DELETE FROM plantacion.asis_trabajador_activo")
-    borrados = cur.rowcount
-
-    # Los modos de cruce se leen con el MISMO cursor. Abrir otra
-    # conexión dentro de esta transacción puede provocar bloqueos.
-    cur.execute("SELECT id, asis_cruce FROM plantacion.fert_empresa")
-    modos = {f["id"]: (f["asis_cruce"] or "codigo_nombre")
-             for f in cur.fetchall()}
-
-    insertados = 0
-    sin_id = 0
-
-    for r in registros:
-        eid = r["empresa_id"]
-        idc = normalizar_id_nomina(modos.get(eid, "codigo_nombre"),
-                                   r.get("id_compuesto"),
-                                   r.get("employee_id"))
-        if not idc:
-            sin_id += 1
-
-        cur.execute("""
-            INSERT INTO plantacion.asis_trabajador_activo
-                (empresa_id, codigo, nombre, employee_id, id_compuesto,
-                 supervisor, estado, fila_excel, archivo, cargado_por)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            ON CONFLICT (empresa_id, id_compuesto)
-                WHERE id_compuesto IS NOT NULL DO NOTHING
-        """, (eid, r["codigo"], r["nombre"], r.get("employee_id"),
-              idc, r.get("supervisor"), r.get("estado", 1),
-              r.get("fila_excel"), archivo, usuario))
-        insertados += 1
-
-    return {"borrados": borrados, "insertados": insertados,
-            "sin_id": sin_id, "modos": modos}
 
 
 def trabajadores_de_periodo(empresa_id: int, zona_id: int, anio: int,
@@ -480,7 +250,7 @@ def trabajadores_de_periodo(empresa_id: int, zona_id: int, anio: int,
 def listar_trabajadores(empresa_id: int, zona_id: int | None = None) -> list[dict]:
     """Padrón del huellero: todos los que alguna vez marcaron."""
     sql = """
-        SELECT t.id, t.codigo, t.nombre, t.id_compuesto, t.zona_id
+        SELECT t.id, t.codigo, t.nombre, t.cod_norm, t.zona_id
         FROM plantacion.asis_trabajador t
         WHERE t.empresa_id = %s
     """
@@ -496,7 +266,7 @@ def resumen_nomina() -> list[dict]:
     return db.fetch_all("""
         SELECT a.empresa_id, e.nombre AS empresa,
                COUNT(*) AS total,
-               COUNT(*) FILTER (WHERE a.id_compuesto IS NOT NULL) AS con_id,
+               COUNT(*) FILTER (WHERE a.cod_norm IS NOT NULL) AS con_id,
                COUNT(*) FILTER (WHERE a.supervisor IS NOT NULL) AS con_supervisor,
                MAX(a.cargado_at) AS ultima_carga, MAX(a.archivo) AS archivo
         FROM plantacion.asis_trabajador_activo a
@@ -505,26 +275,18 @@ def resumen_nomina() -> list[dict]:
     """)
 
 
-def cruzar_periodo(cur, periodo_id: int) -> dict:
-    """Congela el cruce contra la nómina para ese período."""
-    cur.execute("SELECT * FROM plantacion.asis_cruzar_periodo(%s)", (periodo_id,))
-    fila = cur.fetchone() or {}
-    return {"activos": fila.get("activos", 0),
-            "inactivos": fila.get("inactivos", 0)}
-
-
 def sin_cruzar(empresa_id: int, limite: int = 300) -> list[dict]:
     """
     Gente del huellero cuyo id compuesto no está en la nómina.
     Sirve para corregir la columna `id` del Excel de trabajadores.
     """
     return db.fetch_all("""
-        SELECT DISTINCT t.codigo, t.nombre, t.id_compuesto,
+        SELECT t.codigo, t.nombre, t.cod_norm,
                COUNT(m.id) AS marcaciones
         FROM plantacion.asis_marcacion m
         JOIN plantacion.asis_trabajador t ON t.id = m.trabajador_id
         WHERE t.empresa_id = %s AND m.estado_activo = 0
-        GROUP BY t.codigo, t.nombre, t.id_compuesto
+        GROUP BY t.codigo, t.nombre, t.cod_norm
         ORDER BY COUNT(m.id) DESC, t.nombre
         LIMIT %s
     """, (empresa_id, limite))
@@ -591,7 +353,7 @@ def marcaciones_vista(empresa_id: int, anio=None, mes=None, dia=None,
     sql = """
         SELECT DISTINCT ON (v.trabajador_id, v.fecha)
                v.marcacion_id, v.codigo, v.nombre, v.supervisor,
-               v.trabajador_id, v.cod_huellero, v.id_compuesto,
+               v.trabajador_id, v.cod_huellero, v.cod_norm,
                v.fecha, v.dia, v.anio, v.mes,
                v.entrada, v.salida, v.minutos, v.horas,
                v.estado_marcacion AS estado, v.n_marcas, v.zona
@@ -623,12 +385,12 @@ def padron_activo(empresa_id: int, anio=None, mes=None,
     """
     sql = """
         SELECT a.id AS activo_id, a.codigo, a.nombre, a.supervisor,
-               a.id_compuesto, a.employee_id,
+               a.cod_norm, a.employee_id,
                t.id AS trabajador_id
         FROM plantacion.asis_trabajador_activo a
         LEFT JOIN plantacion.asis_trabajador t
                ON t.empresa_id = a.empresa_id
-              AND t.id_compuesto = a.id_compuesto
+              AND t.cod_norm   = a.cod_norm
         WHERE a.empresa_id = %s AND a.estado = 1
     """
     params: list = [empresa_id]
@@ -695,3 +457,143 @@ def dias_vista(empresa_id: int, anio: int, mes: int) -> list[int]:
         WHERE empresa_id = %s AND anio = %s AND mes = %s ORDER BY dia
     """, (empresa_id, anio, mes))
     return [f["dia"] for f in filas]
+
+
+_SQL_MARCACION = """
+    INSERT INTO plantacion.asis_marcacion
+        (periodo_id, trabajador_id, fecha, dia, entrada, salida,
+         minutos, estado, n_marcas, marcas, departamento)
+    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    ON CONFLICT (periodo_id, trabajador_id, dia) DO UPDATE SET
+        fecha=EXCLUDED.fecha, entrada=EXCLUDED.entrada,
+        salida=EXCLUDED.salida, minutos=EXCLUDED.minutos,
+        estado=EXCLUDED.estado, n_marcas=EXCLUDED.n_marcas,
+        marcas=EXCLUDED.marcas, departamento=EXCLUDED.departamento
+"""
+
+
+def guardar_marcacion(cur, periodo_id: int, trabajador_id: int, d: dict):
+    cur.execute(_SQL_MARCACION, (
+        periodo_id, trabajador_id, d["fecha"], d["dia"],
+        d.get("entrada"), d.get("salida"), d.get("minutos"),
+        d.get("estado", "completo"), d.get("n_marcas", 0),
+        json.dumps(d.get("marcas") or []), d.get("departamento"),
+    ))
+
+
+def marcaciones_de_trabajador(trabajador_id: int, anio: int | None = None,
+                              mes: int | None = None) -> list[dict]:
+    sql = _SELECT_MARCACIONES + " WHERE t.id = %s"
+    params: list = [trabajador_id]
+    if anio:
+        sql += " AND p.anio = %s"
+        params.append(anio)
+    if mes:
+        sql += " AND p.mes = %s"
+        params.append(mes)
+    sql += " ORDER BY m.fecha"
+    return db.fetch_all(sql, tuple(params))
+
+
+def departamentos_disponibles(empresa_id: int, zona_id=None,
+                              anio=None, mes=None) -> list[str]:
+    """Supervisores con marcaciones, para el desplegable del filtro."""
+    sql = """
+        SELECT DISTINCT m.departamento AS v
+        FROM plantacion.asis_marcacion m
+        JOIN plantacion.asis_periodo p ON p.id = m.periodo_id
+        WHERE p.empresa_id = %s
+          AND m.departamento IS NOT NULL AND m.departamento <> ''
+    """
+    params: list = [empresa_id]
+    if zona_id:
+        sql += " AND p.zona_id = %s"
+        params.append(zona_id)
+    if anio:
+        sql += " AND p.anio = %s"
+        params.append(anio)
+    if mes:
+        sql += " AND p.mes = %s"
+        params.append(mes)
+    sql += " ORDER BY v"
+    return [f["v"] for f in db.fetch_all(sql, tuple(params))]
+
+
+def dias_con_registro(empresa_id: int, anio: int, mes: int,
+                      zona_id: int | None = None) -> list[int]:
+    """Días del mes que tienen alguna marcación, para el filtro de día."""
+    sql = """
+        SELECT DISTINCT m.dia FROM plantacion.asis_marcacion m
+        JOIN plantacion.asis_periodo p ON p.id = m.periodo_id
+        WHERE p.empresa_id = %s AND p.anio = %s AND p.mes = %s
+    """
+    params: list = [empresa_id, anio, mes]
+    if zona_id:
+        sql += " AND p.zona_id = %s"
+        params.append(zona_id)
+    sql += " ORDER BY m.dia"
+    return [f["dia"] for f in db.fetch_all(sql, tuple(params))]
+
+
+def reemplazar_nomina(cur, registros: list[dict],
+                      archivo=None, usuario=None) -> dict:
+    """
+    Borra TODA la nómina y carga la nueva. La empresa viene en el archivo.
+
+    El cruce NO se hace aquí: lo dispara el botón Procesar. Así, editar
+    la nómina y volver a subirla refresca los análisis sin recargar
+    ninguna asistencia.
+    """
+    cur.execute("DELETE FROM plantacion.asis_trabajador_activo")
+    borrados = cur.rowcount
+
+    insertados = sin_codigo = repetidos = 0
+    vistos: set = set()
+
+    for r in registros:
+        eid = r["empresa_id"]
+        cod = normalizar_codigo(r.get("employee_id") or r.get("codigo"))
+        if not cod:
+            sin_codigo += 1
+            continue
+
+        clave = (eid, cod)
+        if clave in vistos:
+            repetidos += 1
+            continue
+        vistos.add(clave)
+
+        cur.execute("""
+            INSERT INTO plantacion.asis_trabajador_activo
+                (empresa_id, codigo, nombre, employee_id, cod_norm,
+                 supervisor, estado, fila_excel, archivo, cargado_por)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """, (eid, r["codigo"], r["nombre"], r.get("employee_id"), cod,
+              r.get("supervisor"), r.get("estado", 1),
+              r.get("fila_excel"), archivo, usuario))
+        insertados += 1
+
+    return {"borrados": borrados, "insertados": insertados,
+            "sin_codigo": sin_codigo, "repetidos": repetidos}
+
+
+def hay_marcaciones(empresa_id: int) -> int:
+    """Marcaciones cargadas, hayan cruzado o no. Para avisar si falta procesar."""
+    fila = db.fetch_one("""
+        SELECT COUNT(*) AS n FROM plantacion.asis_marcacion m
+        JOIN plantacion.asis_periodo p ON p.id = m.periodo_id
+        WHERE p.empresa_id = %s
+    """, (empresa_id,))
+    return (fila or {}).get("n", 0)
+
+
+def procesar(empresa_id: int | None = None) -> list[dict]:
+    """
+    Recalcula el cruce de TODAS las marcaciones contra la nómina vigente.
+
+    Es lo que dispara el botón Procesar. Se puede correr las veces que
+    haga falta: cada vez refleja la nómina de ese momento.
+    """
+    with db.get_cursor() as cur:
+        cur.execute("SELECT * FROM plantacion.asis_procesar(%s)", (empresa_id,))
+        return [dict(f) for f in cur.fetchall()]

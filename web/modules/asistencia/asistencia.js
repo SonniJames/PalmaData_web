@@ -78,6 +78,7 @@ function esqueleto(cont) {
                       border-radius:var(--radius-sm);font-size:14px">
         <button class="btn btn-ghost" id="aTx" style="padding:8px 11px" title="Limpiar">✕</button></div>
       <div class="sp"></div>
+      <button class="btn btn-primary" id="aP" title="Cruza las marcaciones con la nómina vigente">Procesar</button>
       <button class="btn btn-ghost" id="aR">Actualizar</button>
     </div>
     <div class="ftabs">
@@ -98,6 +99,7 @@ function esqueleto(cont) {
   $('#aDi').onchange = e => { S.dia = e.target.value; cargar(); };
   $('#aSu').onchange = e => { S.supervisor = e.target.value; cargar(); };
   $('#aR').onclick = cargar;
+  $('#aP').onclick = procesar;
 
   let temporizador = null;
   $('#aTr').oninput = e => {
@@ -109,6 +111,27 @@ function esqueleto(cont) {
 
   cont.querySelectorAll('.ftab').forEach(b =>
     b.onclick = () => { S.tab = b.dataset.tab; cargar(); });
+}
+
+async function procesar() {
+  const btn = $('#aP');
+  const antes = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Procesando…';
+  try {
+    const r = await API.procesar(S.empresaId);
+    const linea = (r.resultado || [])
+      .map(x => `${x.empresa}: ${n0(x.activas)} de ${n0(x.marcaciones)} activas`)
+      .join(' · ');
+    const c = $('#aC');
+    if (c) c.insertAdjacentHTML('afterbegin',
+      `<div class="msg msg-ok" id="aPM">Cruce actualizado. ${esc(linea)}</div>`);
+    await cargar();
+    setTimeout(() => { const m = $('#aPM'); if (m) m.remove(); }, 6000);
+  } catch (e) {
+    const c = $('#aC');
+    if (c) c.insertAdjacentHTML('afterbegin',
+      `<div class="msg msg-err">${esc(e.message)}</div>`);
+  } finally { btn.disabled = false; btn.textContent = antes; }
 }
 
 async function cargar() {
@@ -184,12 +207,21 @@ function vistaAnalisis(c) {
 
   if (!t.trabajadores_activos && !t.registros_completos) {
     c.innerHTML = `<div class="vacio"><h3>Sin datos</h3>
-      <p>Carga primero la tabla de <strong>Trabajadores activos</strong> y luego
-         los archivos del huellero en <strong>Cargar datos</strong>.</p></div>`;
+      <p>Carga la tabla de <strong>Trabajadores activos</strong> y los archivos
+         del huellero en <strong>Cargar datos</strong>, en el orden que quieras.
+         Después pulsa <strong>Procesar</strong>.</p></div>`;
     return;
   }
 
+  const avisoProcesar = (d.hay_marcaciones && !t.registros_completos) ? `
+    <div class="msg msg-warn" style="margin-bottom:18px">
+      Hay <strong>${n0(d.hay_marcaciones)}</strong> marcaciones cargadas pero
+      ninguna cruzó con la nómina. Pulsa <strong>Procesar</strong> arriba para
+      hacer el cruce.
+    </div>` : '';
+
   c.innerHTML = `
+    ${avisoProcesar}
     <div class="kpis">
       <div class="kpi"><div class="l">Trabajadores activos</div>
         <div class="v">${n0(t.trabajadores_activos)}</div>
@@ -507,31 +539,36 @@ async function vistaPersonal(c) {
         no hay que elegirla aquí. Cada carga reemplaza por completo la anterior.</p>
 
       <div class="msg msg-warn" style="margin:0 0 16px">
-        <strong>Esta tabla va primero.</strong> Sin ella no se pueden cargar
-        asistencias: el sistema no tendría contra qué cruzar y todos los registros
-        quedarían como inactivos.
+        <strong>Después de cargar, pulsa Procesar.</strong> El cruce no es
+        automático: así puedes corregir esta tabla y volver a subirla las veces
+        que haga falta, sin recargar ninguna asistencia. El orden entre esta
+        tabla y los archivos del huellero da igual.
       </div>
 
       <div class="fbar" style="margin-bottom:14px">
+        <button class="btn btn-primary" id="nP">Procesar cruce</button>
         <div class="sp"></div>
         <a class="btn btn-ghost" href="${API.urlFormatoNomina()}" download>
           Descargar formato en blanco</a>
       </div>
+      <div id="nPM"></div>
 
       <div class="card" style="padding:14px 18px;margin:0 0 16px;background:var(--cream)">
         <p class="sub" style="margin:0"><strong>Columnas del archivo:</strong>
-          Codigo · Nombre Del Trabajador · Employee ID · estado · id · supervisor · empresa</p>
-        <p class="sub" style="margin:10px 0 0">La columna <strong>id</strong> es la
-          llave del cruce: <em>EmployeeID_Nombre</em>, con el nombre tal como viene
-          del huellero. El Employee ID por sí solo no basta porque se repite entre
-          personas distintas.</p>
-        <p class="sub" style="margin:10px 0 0">En <strong>empresa</strong>:
-          1 = Palmeras de Yarima · 2 = Villa Claudia · 3 = CUCÚ.</p>
+          Codigo · Nombre Del Trabajador · Employee ID · estado · supervisor · empresa</p>
+        <p class="sub" style="margin:10px 0 0">El cruce se hace por
+          <strong>Employee ID</strong>. Dentro de una empresa no se repiten, así que
+          el código basta; entre empresas sí —el 103 de una y el 103 de otra son
+          personas distintas— y por eso la columna <em>empresa</em> es obligatoria.</p>
+        <p class="sub" style="margin:10px 0 0">Los ceros delante no importan:
+          <em>0031</em>, <em>31</em> y <em>31.0</em> son el mismo código.
+          En <strong>empresa</strong>: 1 = Palmeras de Yarima · 2 = Villa Claudia ·
+          3 = CUCÚ.</p>
       </div>
 
       <div class="dz" id="nZ" style="padding:22px">
         <div class="m">Arrastra el Excel de trabajadores o haz clic</div>
-        <div class="s">.xlsx con las siete columnas</div>
+        <div class="s">.xlsx con las seis columnas</div>
         <input type="file" id="nF" accept=".xlsx,.xlsm" hidden>
       </div>
       <div id="nCh"></div>
@@ -547,7 +584,7 @@ async function vistaPersonal(c) {
       <div class="twrap" style="max-height:none">
         <table class="ft">
           <thead><tr><th>Empresa</th><th class="num">Trabajadores</th>
-            <th class="num">Con id de cruce</th><th class="num">Con supervisor</th>
+            <th class="num">Con código</th><th class="num">Con supervisor</th>
             <th>Última carga</th></tr></thead>
           <tbody>${resumen.map(x => `<tr>
             <td class="ln">${esc(x.empresa)}</td>
@@ -569,22 +606,38 @@ async function vistaPersonal(c) {
     <div class="card">
       <h3>Gente del huellero que no cruzó</h3>
       <p class="sub">Estos ${n0(sinCruzar.length)} tienen marcaciones pero su
-        <strong>id compuesto</strong> no está en la tabla de trabajadores, así que
-        no aparecen en los análisis. Copia el id tal cual a la columna <em>id</em>
-        del Excel si son gente activa.</p>
+        <strong>Employee ID</strong> no está en la tabla de trabajadores, así que
+        no aparecen en los análisis. Si son gente activa, agrégalos al Excel y
+        vuelve a procesar.</p>
       <div class="twrap">
         <table class="ft">
-          <thead><tr><th class="num">Employee ID</th><th>Nombre en el huellero</th>
-            <th>id compuesto</th><th class="num">Marcaciones</th></tr></thead>
+          <thead><tr><th class="num">Employee ID</th><th class="num">Normalizado</th>
+            <th>Nombre en el huellero</th><th class="num">Marcaciones</th></tr></thead>
           <tbody>${sinCruzar.slice(0, 200).map(x => `<tr>
             <td class="num">${esc(x.codigo)}</td>
+            <td class="num"><code style="font-size:12.5px">${esc(x.cod_norm)}</code></td>
             <td class="ln">${esc(x.nombre)}</td>
-            <td><code style="font-size:12.5px">${esc(x.id_compuesto)}</code></td>
             <td class="num">${n0(x.marcaciones)}</td>
           </tr>`).join('')}</tbody>
         </table>
       </div>
     </div>` : ''}`;
+
+  const btnP = $('#nP');
+  if (btnP) btnP.onclick = async () => {
+    btnP.disabled = true; btnP.textContent = 'Procesando…';
+    try {
+      const r = await API.procesar(null);
+      const filas = (r.resultado || []).map(x =>
+        `<li><strong>${esc(x.empresa)}</strong>: ${n0(x.activas)} activas de
+         ${n0(x.marcaciones)} marcaciones · ${n0(x.sin_cruzar)} personas sin cruzar</li>`).join('');
+      $('#nPM').innerHTML = `<div class="msg msg-ok" style="margin:0 0 14px">
+        Cruce actualizado.${filas ? `<ul>${filas}</ul>` : ''}</div>`;
+      setTimeout(() => vistaPersonal(c), 1600);
+    } catch (e) {
+      $('#nPM').innerHTML = `<div class="msg msg-err" style="margin:0 0 14px">${esc(e.message)}</div>`;
+    } finally { btnP.disabled = false; btnP.textContent = 'Procesar cruce'; }
+  };
 
   let archivo = null;
   const z = $('#nZ'), inp = $('#nF'), btn = $('#nS');
@@ -620,7 +673,9 @@ async function vistaPersonal(c) {
         ? `<ul>${r.advertencias.map(a => `<li>${esc(a)}</li>`).join('')}</ul>` : '';
       $('#nM').innerHTML = `<div class="msg ${av ? 'msg-warn' : 'msg-ok'}">
         ${r.insertados} trabajadores cargados
-        (${r.borrados} de la carga anterior reemplazados).${av}</div>`;
+        (${r.borrados} de la carga anterior reemplazados).<br>
+        <strong>Ahora pulsa «Procesar cruce»</strong> para que los análisis
+        tomen esta lista.${av}</div>`;
       setTimeout(() => vistaPersonal(c), 1400);
     } catch (e) {
       $('#nM').innerHTML = `<div class="msg msg-err">${esc(e.message)}</div>`;

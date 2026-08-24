@@ -39,6 +39,13 @@ export const API = {
   urlAnalisisExcel: (f = {}) => `${BASE}/analisis/excel?${API._q(f)}`,
   urlRevisarExcel: (f = {}) => `${BASE}/revisar/excel?${API._q(f)}`,
 
+  procesar: (empresaId) =>
+    pedir(`${BASE}/procesar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(empresaId ? { empresa_id: empresaId } : {}),
+    }),
+
   // --- Trabajadores activos ---
   nomina: () => pedir(`${BASE}/nomina`),
   urlFormatoNomina: () => `${BASE}/nomina/formato`,

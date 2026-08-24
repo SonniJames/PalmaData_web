@@ -438,9 +438,9 @@ def analizar_revisar(filas: list[dict], padron: list[dict],
     """
     incompletos = [f for f in filas if f.get("estado") == "incompleta"]
 
-    # Quién tiene ALGÚN registro. Se cruza por id_compuesto, que es la
+    # Quién tiene ALGÚN registro. Se cruza por cod_norm, que es la
     # llave común entre la nómina y el huellero.
-    con_registro = {f.get("id_compuesto") for f in filas if f.get("id_compuesto")}
+    con_registro = {f.get("cod_norm") for f in filas if f.get("cod_norm")}
     con_registro |= {f.get("trabajador_id") for f in filas}
 
     revisar = []
@@ -459,7 +459,7 @@ def analizar_revisar(filas: list[dict], padron: list[dict],
 
     fecha_dia = str(filas[0].get("fecha")) if (un_dia and filas) else None
     ausentes = [t for t in padron
-                if t.get("id_compuesto") not in con_registro
+                if t.get("cod_norm") not in con_registro
                 and t.get("trabajador_id") not in con_registro]
     for t in ausentes:
         revisar.append({
