@@ -229,17 +229,6 @@ def obtener_o_crear_periodo(cur, empresa_id: int, zona_id: int, anio: int,
     return cur.fetchone()["id"]
 
 
-def registrar_en_periodo(cur, periodo_id: int, trabajador_id: int):
-    """
-    Deja constancia de que la persona venía en el archivo de ese
-    período, marcara o no. Es el denominador del % de marcación.
-    """
-    cur.execute("""
-        INSERT INTO plantacion.asis_periodo_trabajador (periodo_id, trabajador_id)
-        VALUES (%s,%s) ON CONFLICT DO NOTHING
-    """, (periodo_id, trabajador_id))
-
-
 def borrar_marcaciones(cur, periodo_id: int) -> int:
     cur.execute("DELETE FROM plantacion.asis_marcacion WHERE periodo_id=%s",
                 (periodo_id,))
@@ -278,93 +267,6 @@ def obtener_o_crear_trabajador(cur, empresa_id: int, zona_id: int,
         RETURNING id
     """, (empresa_id, zona_id, str(codigo), nombre, id_compuesto))
     return cur.fetchone()["id"]
-
-
-def registrar_en_periodo(cur, periodo_id: int, trabajador_id: int):
-    """
-    Deja constancia de que la persona venía en el archivo de ese
-    período, marcara o no. Es el denominador del % de marcación.
-    """
-    cur.execute("""
-        INSERT INTO plantacion.asis_periodo_trabajador (periodo_id, trabajador_id)
-        VALUES (%s,%s) ON CONFLICT DO NOTHING
-    """, (periodo_id, trabajador_id))
-
-
-def borrar_marcaciones(cur, periodo_id: int) -> int:
-    cur.execute("DELETE FROM plantacion.asis_marcacion WHERE periodo_id=%s",
-                (periodo_id,))
-    return cur.rowcount
-
-
-def eliminar_periodo(empresa_id: int, zona_id: int, anio: int, mes: int) -> bool:
-    with db.get_cursor() as cur:
-        cur.execute("""
-            DELETE FROM plantacion.asis_periodo
-            WHERE empresa_id=%s AND zona_id=%s AND anio=%s AND mes=%s
-        """, (empresa_id, zona_id, anio, mes))
-        return cur.rowcount > 0
-
-
-# ============================================================
-#  TRABAJADORES
-# ============================================================
-
-def obtener_o_crear_trabajador(cur, empresa_id: int, zona_id: int,
-                               codigo: str, nombre: str) -> int:
-    """
-    La llave es (empresa, id_compuesto), donde id_compuesto es
-    "EmployeeID_Nombre". El Employee ID solo no basta: se repite entre
-    personas distintas, y fusionarlas mezclaría sus marcaciones.
-
-    `zona_id` se guarda como referencia de la última zona donde se la
-    vio, pero no forma parte de la llave: la misma persona puede marcar
-    en varios huelleros.
-    """
-    id_compuesto = f"{codigo}_{nombre}"
-    cur.execute("""
-        INSERT INTO plantacion.asis_trabajador
-            (empresa_id, zona_id, codigo, nombre, id_compuesto)
-        VALUES (%s,%s,%s,%s,%s)
-        ON CONFLICT (empresa_id, id_compuesto)
-            DO UPDATE SET nombre = EXCLUDED.nombre,
-                          zona_id = EXCLUDED.zona_id
-        RETURNING id
-    """, (empresa_id, zona_id, str(codigo), nombre, id_compuesto))
-    return cur.fetchone()["id"]
-
-
-def listar_trabajadores(empresa_id: int, zona_id: int | None = None) -> list[dict]:
-    sql = """
-        SELECT t.id, t.codigo, t.nombre, t.activo, t.zona_id, z.nombre AS zona
-        FROM plantacion.asis_trabajador t
-        JOIN plantacion.asis_zona z ON z.id = t.zona_id
-        WHERE t.empresa_id = %s
-    """
-    params: list = [empresa_id]
-    if zona_id:
-        sql += " AND t.zona_id = %s"
-        params.append(zona_id)
-    sql += " ORDER BY z.orden, t.nombre"
-    return db.fetch_all(sql, tuple(params))
-
-
-def trabajadores_de_periodo(empresa_id: int, zona_id: int, anio: int,
-                            mes: int | None = None) -> list[dict]:
-    """Para precargar el formato con la gente de ESA zona el mes anterior."""
-    sql = """
-        SELECT DISTINCT t.codigo, t.nombre
-        FROM plantacion.asis_trabajador t
-        JOIN plantacion.asis_marcacion m ON m.trabajador_id = t.id
-        JOIN plantacion.asis_periodo p   ON p.id = m.periodo_id
-        WHERE p.empresa_id = %s AND p.zona_id = %s AND p.anio = %s
-    """
-    params: list = [empresa_id, zona_id, anio]
-    if mes:
-        sql += " AND p.mes = %s"
-        params.append(mes)
-    sql += " ORDER BY t.nombre"
-    return db.fetch_all(sql, tuple(params))
 
 
 # ============================================================
@@ -521,15 +423,19 @@ def reemplazar_nomina(cur, registros: list[dict],
     cur.execute("DELETE FROM plantacion.asis_trabajador_activo")
     borrados = cur.rowcount
 
-    modos: dict = {}
+    # Los modos de cruce se leen con el MISMO cursor. Abrir otra
+    # conexión dentro de esta transacción puede provocar bloqueos.
+    cur.execute("SELECT id, asis_cruce FROM plantacion.fert_empresa")
+    modos = {f["id"]: (f["asis_cruce"] or "codigo_nombre")
+             for f in cur.fetchall()}
+
     insertados = 0
     sin_id = 0
 
     for r in registros:
         eid = r["empresa_id"]
-        if eid not in modos:
-            modos[eid] = modo_cruce(eid)
-        idc = normalizar_id_nomina(modos[eid], r.get("id_compuesto"),
+        idc = normalizar_id_nomina(modos.get(eid, "codigo_nombre"),
+                                   r.get("id_compuesto"),
                                    r.get("employee_id"))
         if not idc:
             sin_id += 1
@@ -539,7 +445,8 @@ def reemplazar_nomina(cur, registros: list[dict],
                 (empresa_id, codigo, nombre, employee_id, id_compuesto,
                  supervisor, estado, fila_excel, archivo, cargado_por)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            ON CONFLICT (empresa_id, id_compuesto) DO NOTHING
+            ON CONFLICT (empresa_id, id_compuesto)
+                WHERE id_compuesto IS NOT NULL DO NOTHING
         """, (eid, r["codigo"], r["nombre"], r.get("employee_id"),
               idc, r.get("supervisor"), r.get("estado", 1),
               r.get("fila_excel"), archivo, usuario))
@@ -547,6 +454,42 @@ def reemplazar_nomina(cur, registros: list[dict],
 
     return {"borrados": borrados, "insertados": insertados,
             "sin_id": sin_id, "modos": modos}
+
+
+def trabajadores_de_periodo(empresa_id: int, zona_id: int, anio: int,
+                            mes: int | None = None) -> list[dict]:
+    """
+    Gente que ya venía en el archivo de esa zona, para precargar el
+    formato del mes siguiente y no reescribir la lista cada vez.
+    """
+    sql = """
+        SELECT DISTINCT t.codigo, t.nombre, m.departamento
+        FROM plantacion.asis_trabajador t
+        JOIN plantacion.asis_marcacion m ON m.trabajador_id = t.id
+        JOIN plantacion.asis_periodo p   ON p.id = m.periodo_id
+        WHERE p.empresa_id = %s AND p.zona_id = %s AND p.anio = %s
+    """
+    params: list = [empresa_id, zona_id, anio]
+    if mes:
+        sql += " AND p.mes = %s"
+        params.append(mes)
+    sql += " ORDER BY t.nombre"
+    return db.fetch_all(sql, tuple(params))
+
+
+def listar_trabajadores(empresa_id: int, zona_id: int | None = None) -> list[dict]:
+    """Padrón del huellero: todos los que alguna vez marcaron."""
+    sql = """
+        SELECT t.id, t.codigo, t.nombre, t.id_compuesto, t.zona_id
+        FROM plantacion.asis_trabajador t
+        WHERE t.empresa_id = %s
+    """
+    params: list = [empresa_id]
+    if zona_id:
+        sql += " AND t.zona_id = %s"
+        params.append(zona_id)
+    sql += " ORDER BY t.nombre"
+    return db.fetch_all(sql, tuple(params))
 
 
 def resumen_nomina() -> list[dict]:
