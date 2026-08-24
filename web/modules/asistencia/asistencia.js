@@ -1,15 +1,22 @@
 // ============================================================
 // PalmaData · Asistencia
-// Los promedios se calculan sobre los días CON REGISTRO:
-// domingos, festivos y ausencias no bajan los promedios.
+//
+// Los análisis se hacen SOLO sobre trabajadores activos: los que
+// están en la tabla de nómina al momento de cargar cada archivo.
+//
+// Dos pantallas con propósitos distintos:
+//   Análisis    -> quienes marcaron entrada Y salida. Jornadas.
+//   A revisar   -> solo entrada, solo salida o ninguna marca.
+//
+// No hay filtro de zona: una persona marca hoy en una y mañana en
+// otra, y sigue siendo la misma jornada.
 // ============================================================
 import { API } from './api.js';
 
 const S = {
   empresaId: null, empresa: null, empresas: [],
-  zonaId: '', zona: null, zonas: [],
-  anio: '', mes: '', dia: '', trabajador: '', departamento: '',
-  anios: [], meses: [], dias: [], departamentos: [],
+  anio: '', mes: '', dia: '', trabajador: '', supervisor: '',
+  anios: [], meses: [], dias: [], supervisores: [],
   tab: 'analisis', datos: null,
 };
 
@@ -26,6 +33,11 @@ const cap = t => t ? t[0].toUpperCase() + t.slice(1) : t;
 
 const COLORES = ['#16412b', '#2f7d4f', '#e6a817', '#e0651a', '#5c8d6f',
   '#b8890f', '#8ab19a', '#c9560f'];
+
+const filtros = () => ({
+  empresaId: S.empresaId, anio: S.anio, mes: S.mes, dia: S.dia,
+  trabajador: S.trabajador, supervisor: S.supervisor,
+});
 
 // ============================================================
 export async function montar(cont, sub = 'analisis') {
@@ -52,19 +64,17 @@ function esqueleto(cont) {
       <div class="g"><label for="aEm">Empresa</label>
         <select id="aEm" style="min-width:170px">${S.empresas.map(e =>
           `<option value="${e.id}" ${e.id === S.empresaId ? 'selected' : ''}>${esc(e.nombre)}</option>`).join('')}</select></div>
-      <div class="g"><label for="aZo">Zona</label>
-        <select id="aZo" style="min-width:150px"><option value="">Todas</option></select></div>
       <div class="g"><label for="aAn">Año</label>
-        <select id="aAn" style="min-width:110px"><option value="">Todos</option></select></div>
+        <select id="aAn" style="min-width:105px"><option value="">Todos</option></select></div>
       <div class="g"><label for="aMe">Mes</label>
-        <select id="aMe" style="min-width:130px"><option value="">Todos</option></select></div>
+        <select id="aMe" style="min-width:125px"><option value="">Todos</option></select></div>
       <div class="g"><label for="aDi">Día</label>
-        <select id="aDi" style="min-width:90px"><option value="">Todos</option></select></div>
-      <div class="g"><label for="aDe">Supervisor</label>
-        <select id="aDe" style="min-width:160px"><option value="">Todos</option></select></div>
+        <select id="aDi" style="min-width:85px"><option value="">Todos</option></select></div>
+      <div class="g"><label for="aSu">Supervisor</label>
+        <select id="aSu" style="min-width:155px"><option value="">Todos</option></select></div>
       <div class="g"><label for="aTr">Trabajador</label>
         <input id="aTr" placeholder="Buscar…" autocomplete="off" value="${esc(S.trabajador)}"
-               style="min-width:190px;padding:8px 11px;border:1.5px solid var(--line);
+               style="min-width:180px;padding:8px 11px;border:1.5px solid var(--line);
                       border-radius:var(--radius-sm);font-size:14px">
         <button class="btn btn-ghost" id="aTx" style="padding:8px 11px" title="Limpiar">✕</button></div>
       <div class="sp"></div>
@@ -74,19 +84,19 @@ function esqueleto(cont) {
       <button class="ftab" data-tab="analisis">Análisis</button>
       <button class="ftab" data-tab="revisar">A revisar</button>
       <button class="ftab" data-tab="datos">Cargar datos</button>
+      <button class="ftab" data-tab="personal">Trabajadores activos</button>
     </div>
     <div id="aC"></div>`;
 
   $('#aEm').onchange = e => {
     S.empresaId = +e.target.value;
-    S.zonaId = ''; S.anio = ''; S.mes = ''; S.dia = '';
+    S.anio = ''; S.mes = ''; S.dia = ''; S.supervisor = '';
     cargar();
   };
-  $('#aZo').onchange = e => { S.zonaId = e.target.value; S.anio = ''; S.mes = ''; S.dia = ''; cargar(); };
   $('#aAn').onchange = e => { S.anio = e.target.value; S.mes = ''; S.dia = ''; cargar(); };
   $('#aMe').onchange = e => { S.mes = e.target.value; S.dia = ''; cargar(); };
   $('#aDi').onchange = e => { S.dia = e.target.value; cargar(); };
-  $('#aDe').onchange = e => { S.departamento = e.target.value; cargar(); };
+  $('#aSu').onchange = e => { S.supervisor = e.target.value; cargar(); };
   $('#aR').onclick = cargar;
 
   let temporizador = null;
@@ -108,53 +118,26 @@ async function cargar() {
   if (!c) return;
 
   if (S.tab === 'datos') return vistaCarga(c);
+  if (S.tab === 'personal') return vistaPersonal(c);
 
   c.innerHTML = `<div class="cargando">Calculando…</div>`;
   try {
-    S.datos = await API.analisis({
-      empresaId: S.empresaId, zonaId: S.zonaId, anio: S.anio, mes: S.mes,
-      dia: S.dia, trabajador: S.trabajador, departamento: S.departamento,
-    });
-    S.departamentos = S.datos.departamentos || [];
-    S.zonas = S.datos.zonas || [];
-    S.zona = S.datos.zona;
+    S.datos = await (S.tab === 'revisar' ? API.revisar : API.analisis)(filtros());
     S.anios = S.datos.anios || [];
     S.meses = S.datos.meses || [];
     S.dias = S.datos.dias || [];
+    S.supervisores = S.datos.supervisores_lista || S.datos.supervisores || [];
     S.empresa = S.datos.empresa;
-    pintarFiltros();
+    pintarFiltros(S.datos);
   } catch (e) {
     c.innerHTML = `<div class="msg msg-err">${esc(e.message)}</div>`;
-    return;
-  }
-
-  if (S.datos.vacio) {
-    c.innerHTML = `<div class="vacio">
-      <h3>Sin datos${S.trabajador ? ' para esa búsqueda' : ''}</h3>
-      <p>${S.trabajador
-        ? 'Prueba con otro nombre o limpia el filtro.'
-        : 'Carga el Excel del huellero en la pestaña <strong>Cargar datos</strong>.'}</p>
-      </div>`;
     return;
   }
 
   S.tab === 'revisar' ? vistaRevisar(c) : vistaAnalisis(c);
 }
 
-function pintarFiltros() {
-  const zo = $('#aZo');
-  if (zo) zo.innerHTML = `<option value="">Todas</option>` + S.zonas.map(z =>
-    `<option value="${z.id}" ${String(z.id) === String(S.zonaId) ? 'selected' : ''}>${esc(z.nombre)}</option>`).join('');
-
-  const de = $('#aDe');
-  if (de) de.innerHTML = `<option value="">Todos</option>`
-    + S.departamentos.map(d =>
-        `<option value="${esc(d)}" ${d === S.departamento ? 'selected' : ''}>${esc(d)}</option>`).join('')
-    + ((S.datos?.supervisores || []).some(x => x.departamento === 'Sin asignar')
-        || S.departamento === 'Sin asignar'
-        ? `<option value="Sin asignar" ${S.departamento === 'Sin asignar' ? 'selected' : ''}>Sin asignar</option>`
-        : '');
-
+function pintarFiltros(d) {
   const an = $('#aAn');
   if (an) an.innerHTML = `<option value="">Todos</option>` + S.anios.map(a =>
     `<option value="${a}" ${String(a) === String(S.anio) ? 'selected' : ''}>${a}</option>`).join('');
@@ -164,61 +147,98 @@ function pintarFiltros() {
     `<option value="${m.mes}" ${String(m.mes) === String(S.mes) ? 'selected' : ''}>${cap(m.nombre)}</option>`).join('');
 
   const di = $('#aDi');
-  if (di) di.innerHTML = `<option value="">Todos</option>` + S.dias.map(d =>
-    `<option value="${d}" ${String(d) === String(S.dia) ? 'selected' : ''}>${d}</option>`).join('');
+  if (di) di.innerHTML = `<option value="">Todos</option>` + S.dias.map(x =>
+    `<option value="${x}" ${String(x) === String(S.dia) ? 'selected' : ''}>${x}</option>`).join('');
+
+  const lista = (d && d.supervisores && Array.isArray(d.supervisores)
+    && typeof d.supervisores[0] === 'string') ? d.supervisores : (d?.supervisores_lista || []);
+  const su = $('#aSu');
+  if (su) {
+    const nombres = lista.length ? lista
+      : [...new Set((d?.supervisores || []).map(x => x.supervisor).filter(x => x && x !== 'Sin asignar'))];
+    su.innerHTML = `<option value="">Todos</option>`
+      + nombres.map(x => `<option value="${esc(x)}" ${x === S.supervisor ? 'selected' : ''}>${esc(x)}</option>`).join('')
+      + `<option value="Sin asignar" ${S.supervisor === 'Sin asignar' ? 'selected' : ''}>Sin asignar</option>`;
+  }
 }
 
 function periodoTexto() {
-  const z = (S.zona ? `${S.zona} · ` : '')
-          + (S.departamento ? `${S.departamento} · ` : '');
-  if (S.dia && S.mes && S.anio) return `${z}${S.dia} de ${MESES[+S.mes - 1]} de ${S.anio}`;
-  if (S.mes && S.anio) return `${z}${cap(MESES[+S.mes - 1])} de ${S.anio}`;
-  if (S.anio) return `${z}Año ${S.anio}`;
-  return z ? `${S.zona} · todo el histórico` : 'Todo el histórico';
+  const s = S.supervisor ? `${S.supervisor} · ` : '';
+  if (S.dia && S.mes && S.anio) return `${s}${S.dia} de ${MESES[+S.mes - 1]} de ${S.anio}`;
+  if (S.mes && S.anio) return `${s}${cap(MESES[+S.mes - 1])} de ${S.anio}`;
+  if (S.anio) return `${s}Año ${S.anio}`;
+  return s ? `${S.supervisor} · todo el histórico` : 'Todo el histórico';
+}
+
+function botonExcel(url, etiqueta) {
+  return `<a class="btn btn-primary" href="${url}" download
+     style="text-decoration:none">${esc(etiqueta)}</a>`;
 }
 
 // ============================================================
-//  ANÁLISIS
+//  ANÁLISIS · solo quienes marcaron entrada y salida
 // ============================================================
 function vistaAnalisis(c) {
   const d = S.datos, t = d.total;
   const unDia = !!S.dia;
 
+  if (!t.trabajadores_activos && !t.registros_completos) {
+    c.innerHTML = `<div class="vacio"><h3>Sin datos</h3>
+      <p>Carga primero la tabla de <strong>Trabajadores activos</strong> y luego
+         los archivos del huellero en <strong>Cargar datos</strong>.</p></div>`;
+    return;
+  }
+
   c.innerHTML = `
     <div class="kpis">
-      <div class="kpi"><div class="l">Trabajadores</div><div class="v">${n0(t.trabajadores)}</div>
-        <div class="s">${t.sin_registro
-          ? `${n0(t.trabajadores - t.sin_registro)} con registro · ${n0(t.sin_registro)} sin marcar`
-          : esc(periodoTexto())}</div></div>
+      <div class="kpi"><div class="l">Trabajadores activos</div>
+        <div class="v">${n0(t.trabajadores_activos)}</div>
+        <div class="s">${esc(periodoTexto())}</div></div>
+      <div class="kpi acc"><div class="l">Marcación</div>
+        <div class="v">${n2(t.pct_marcacion, 1)}%</div>
+        <div class="s">${n0(t.registros_completos)} de ${n0(t.esperados)} esperados</div></div>
       <div class="kpi"><div class="l">${unDia ? 'Entrada' : 'Entrada promedio'}</div>
         <div class="v">${t.entrada || '—'}</div></div>
       <div class="kpi"><div class="l">${unDia ? 'Salida' : 'Salida promedio'}</div>
         <div class="v">${t.salida || '—'}</div></div>
-      <div class="kpi acc"><div class="l">${unDia ? 'Jornada' : 'Jornada promedio'}</div>
+      <div class="kpi"><div class="l">${unDia ? 'Jornada' : 'Jornada promedio'}</div>
         <div class="v">${t.duracion || '—'}</div>
         <div class="s">${n2(t.horas_promedio, 2)} horas</div></div>
-      <div class="kpi"><div class="l">Registros</div><div class="v">${n0(t.dias_registrados)}</div>
-        <div class="s">${n0(t.dias_calculables)} con jornada · ${n0(t.dias_incompletos)} a revisar</div></div>
-      ${t.dias_incompletos ? `<div class="kpi"><div class="l">A revisar</div>
-        <div class="v" style="color:var(--danger)">${n0(t.dias_incompletos)}</div>
-        <div class="s">marcación incompleta</div></div>` : ''}
+      <div class="kpi"><div class="l">Horas totales</div>
+        <div class="v">${n0(t.horas_total)}</div></div>
     </div>
 
     <div class="card" style="padding:14px 18px">
-      <p class="sub" style="margin:0">Los promedios se calculan sobre los días
-        <strong>con registro</strong>, no sobre los días del calendario: los domingos,
-        festivos y ausencias no bajan el promedio de nadie.</p>
+      <p class="sub" style="margin:0">Aquí solo aparecen los días con
+        <strong>entrada y salida</strong>, que son los únicos donde se puede medir
+        la jornada. Los que marcaron una sola vez o no marcaron están en
+        <strong>A revisar</strong>.</p>
+      <p class="sub" style="margin:10px 0 0">El <strong>porcentaje de marcación</strong>
+        compara los registros completos contra lo esperado: los trabajadores activos
+        multiplicados por los días con actividad.</p>
     </div>
 
+    ${(d.serie || []).length > 1 ? `
     <div class="card">
-      <h3>Trabajadores</h3>
-      <p class="sub">${unDia
-        ? 'Hora de entrada, salida y jornada del día seleccionado. Se muestran las horas tal como se marcaron, aunque falte una de las dos.'
-        : 'Hora promedio de entrada y salida, y duración promedio de la jornada.'}
-        ${d.total.sin_registro
-          ? `Aparecen los <strong>${n0(d.total.trabajadores)}</strong> trabajadores del huellero: los
-             <strong>${n0(d.total.sin_registro)}</strong> que no marcaron se muestran atenuados.`
-          : ''}</p>
+      <h3>Marcación en el tiempo</h3>
+      <p class="sub">Porcentaje de trabajadores activos que marcaron completo cada día.</p>
+      ${barras(d.serie.map(x => ({ etiqueta: x.fecha, valor: x.pct,
+        extra: `${n2(x.pct, 0)}% · ${x.marcaron}/${x.esperados}` })), '%')}
+    </div>` : ''}
+
+    ${seccionSupervisores(d)}
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;
+                  gap:14px;flex-wrap:wrap;margin-bottom:6px">
+        <div>
+          <h3 style="margin:0">Trabajadores con jornada</h3>
+          <p class="sub" style="margin:6px 0 0">${unDia
+            ? 'Hora de entrada, salida y duración del día seleccionado.'
+            : 'Promedios sobre los días en que marcaron entrada y salida.'}</p>
+        </div>
+        ${botonExcel(API.urlAnalisisExcel(filtros()), 'Descargar Excel')}
+      </div>
       <div class="twrap">
         <table class="ft">
           <thead><tr>
@@ -226,23 +246,17 @@ function vistaAnalisis(c) {
             <th class="num">${unDia ? 'Entrada' : 'Entrada prom.'}</th>
             <th class="num">${unDia ? 'Salida' : 'Salida prom.'}</th>
             <th class="num">${unDia ? 'Jornada' : 'Jornada prom.'}</th>
-            <th class="num">Horas</th>
-            <th class="num">Días</th><th class="num">Revisar</th>
+            <th class="num">Horas</th><th class="num">Días</th>
           </tr></thead>
-          <tbody>${d.trabajadores.map(x => `<tr${x.sin_registro
-              ? ' style="opacity:.55"' : ''}>
-            <td class="num">${esc(x.codigo)}</td>
+          <tbody>${d.trabajadores.map(x => `<tr>
+            <td class="num">${esc(x.codigo ?? '—')}</td>
             <td class="ln">${esc(x.nombre)}</td>
-            <td>${esc(x.departamento || '—')}</td>
+            <td>${esc(x.supervisor || '—')}</td>
             <td class="num">${x.entrada || '—'}</td>
             <td class="num">${x.salida || '—'}</td>
             <td class="num">${x.duracion || '—'}</td>
             <td class="num">${x.horas_promedio ? n2(x.horas_promedio, 2) : '—'}</td>
             <td class="num">${n0(x.dias_calculables)}</td>
-            <td class="num">${x.sin_registro
-              ? `<span class="sem sem-deficiente">Sin marcar</span>`
-              : (x.dias_incompletos
-                  ? `<span class="sem sem-bajo">${x.dias_incompletos}</span>` : '—')}</td>
           </tr>`).join('')}</tbody>
         </table>
       </div>
@@ -251,141 +265,97 @@ function vistaAnalisis(c) {
     <div class="grid2">
       <div class="card">
         <h3>Mayor jornada promedio</h3>
-        <p class="sub">Quienes registran jornadas más largas.</p>
         ${tablaRanking(d.mayor_duracion)}
       </div>
       <div class="card">
         <h3>Menor jornada promedio</h3>
-        <p class="sub">Quienes registran jornadas más cortas.</p>
         ${tablaRanking(d.menor_duracion)}
       </div>
-    </div>
-
-    ${seccionSupervisores(d)}
-
-    <div class="grid2">
-      <div class="card">
-        <h3>Entradas más tempranas</h3>
-        <p class="sub">Promedio de hora de entrada más temprano.</p>
-        ${tablaRanking(d.madrugadores, 'entrada')}
-      </div>
-      <div class="card">
-        <h3>Días de menor jornada</h3>
-        <p class="sub">Fechas con la jornada promedio más corta.</p>
-        ${tablaDias(d.dias_menos_horas)}
-      </div>
-    </div>
-
-    ${(d.por_dia || []).length > 1 ? `
-    <div class="card">
-      <h3>Jornada promedio por día</h3>
-      <p class="sub">Cómo varía la duración a lo largo del período.</p>
-      ${barras(d.por_dia.map(x => ({
-        etiqueta: x.fecha, valor: x.horas_promedio, extra: x.duracion })), ' h')}
-    </div>` : ''}`;
+    </div>`;
 }
 
 function seccionSupervisores(d) {
-  const sup = d.supervisores || [];
+  const sup = (d.supervisores || []).filter(x => typeof x === 'object');
   if (!sup.length) return '';
+  const conNombre = sup.filter(x => x.supervisor !== 'Sin asignar');
 
-  const conJornada = sup.filter(x => x.dias_calculables > 0);
-  const soloSinAsignar = sup.length === 1 && sup[0].departamento === 'Sin asignar';
-
-  if (soloSinAsignar) return `
+  if (!conNombre.length) return `
     <div class="card" style="padding:14px 18px">
-      <p class="sub" style="margin:0">Los datos cargados no traen el supervisor
-        (columna <strong>Department</strong> del huellero). Cuando el archivo la
-        incluya, aquí aparecerá la comparación entre equipos.</p>
+      <p class="sub" style="margin:0">La tabla de trabajadores todavía no tiene
+        <strong>supervisor</strong>. Cuando llenes esa columna, aquí aparecerán
+        la comparación entre equipos y sus porcentajes de marcación.</p>
     </div>`;
 
   return `
     <div class="card">
-      <h3>Jornada promedio por supervisor</h3>
-      <p class="sub">Compara los equipos. Cada barra es la duración promedio de
-        las jornadas del personal a cargo de ese supervisor.</p>
-      ${barras(conJornada.map(x => ({
-        etiqueta: x.departamento, valor: x.horas_promedio, extra: x.duracion })), ' h')}
+      <h3>Marcación por supervisor</h3>
+      <p class="sub">Cada equipo tiene distinta cantidad de gente, así que el
+        porcentaje compara mejor que el número absoluto.</p>
+      ${barras(sup.map(x => ({ etiqueta: x.supervisor, valor: x.pct_marcacion,
+        extra: `${n2(x.pct_marcacion, 0)}% · ${x.trabajadores} trab.` })), '%')}
       <div class="twrap" style="max-height:none;margin-top:18px">
         <table class="ft">
           <thead><tr><th>Supervisor</th><th class="num">Trabajadores</th>
-            <th class="num">Entrada prom.</th><th class="num">Salida prom.</th>
-            <th class="num">Jornada prom.</th><th class="num">Horas totales</th>
-            <th class="num">Registros</th><th class="num">Revisar</th></tr></thead>
+            <th class="num">Marcación</th><th class="num">Registros</th>
+            <th class="num">Entrada prom.</th><th class="num">Jornada prom.</th>
+            <th class="num">Horas totales</th></tr></thead>
           <tbody>${sup.map(x => `<tr>
-            <td class="ln">${esc(x.departamento)}</td>
+            <td class="ln">${esc(x.supervisor)}</td>
             <td class="num">${n0(x.trabajadores)}</td>
+            <td class="num"><span class="sem ${x.pct_marcacion >= 80 ? 'sem-optimo'
+              : x.pct_marcacion >= 50 ? 'sem-bajo' : 'sem-deficiente'}">${n2(x.pct_marcacion, 1)}%</span></td>
+            <td class="num">${n0(x.registros_completos)}</td>
             <td class="num">${x.entrada || '—'}</td>
-            <td class="num">${x.salida || '—'}</td>
             <td class="num">${x.duracion || '—'}</td>
             <td class="num">${x.horas_total ? n2(x.horas_total, 1) : '—'}</td>
-            <td class="num">${n0(x.dias_registrados)}</td>
-            <td class="num">${x.dias_incompletos
-              ? `<span class="sem sem-bajo">${x.dias_incompletos}</span>` : '—'}</td>
           </tr>`).join('')}</tbody>
         </table>
       </div>
     </div>
 
-    ${conJornada.length > 1 ? `
+    ${(d.sup_mayor_jornada || []).length > 1 ? `
     <div class="grid2">
+      <div class="card">
+        <h3>Supervisores · mejor marcación</h3>
+        <p class="sub">Equipos donde más gente marca completo.</p>
+        ${tablaSup(d.sup_mejor_marcacion, 'pct')}
+      </div>
       <div class="card">
         <h3>Supervisores · mayor jornada</h3>
         <p class="sub">Equipos con las jornadas promedio más largas.</p>
-        ${tablaSupervisor(d.supervisores_mayor)}
-      </div>
-      <div class="card">
-        <h3>Supervisores · menor jornada</h3>
-        <p class="sub">Equipos con las jornadas promedio más cortas.</p>
-        ${tablaSupervisor(d.supervisores_menor)}
+        ${tablaSup(d.sup_mayor_jornada, 'jornada')}
       </div>
     </div>` : ''}`;
 }
 
-function tablaSupervisor(lista) {
+function tablaSup(lista, campo) {
   if (!lista || !lista.length)
     return `<p style="color:var(--ink-soft);font-size:13px">Sin datos.</p>`;
   return `<div class="twrap" style="max-height:330px">
       <table class="ft">
-        <thead><tr><th>Supervisor</th><th class="num">Jornada</th>
+        <thead><tr><th>Supervisor</th>
+          <th class="num">${campo === 'pct' ? 'Marcación' : 'Jornada'}</th>
           <th class="num">Trabajadores</th></tr></thead>
         <tbody>${lista.map(x => `<tr>
-          <td class="ln">${esc(x.departamento)}</td>
-          <td class="num">${x.duracion || '—'}</td>
+          <td class="ln">${esc(x.supervisor)}</td>
+          <td class="num">${campo === 'pct' ? n2(x.pct_marcacion, 1) + '%' : (x.duracion || '—')}</td>
           <td class="num">${n0(x.trabajadores)}</td>
         </tr>`).join('')}</tbody>
       </table>
     </div>`;
 }
 
-function tablaRanking(lista, campo = 'duracion') {
+function tablaRanking(lista) {
   if (!lista || !lista.length)
     return `<p style="color:var(--ink-soft);font-size:13px">Sin datos.</p>`;
   return `<div class="twrap" style="max-height:330px">
       <table class="ft">
-        <thead><tr><th>Nombre</th>
-          <th class="num">${campo === 'entrada' ? 'Entrada' : 'Jornada'}</th>
+        <thead><tr><th>Nombre</th><th class="num">Jornada</th>
           <th class="num">Días</th></tr></thead>
         <tbody>${lista.map(x => `<tr>
           <td class="ln">${esc(x.nombre)}</td>
-          <td class="num">${(campo === 'entrada' ? x.entrada : x.duracion) || '—'}</td>
-          <td class="num">${n0(x.dias_calculables)}</td>
-        </tr>`).join('')}</tbody>
-      </table>
-    </div>`;
-}
-
-function tablaDias(lista) {
-  if (!lista || !lista.length)
-    return `<p style="color:var(--ink-soft);font-size:13px">Sin datos.</p>`;
-  return `<div class="twrap" style="max-height:330px">
-      <table class="ft">
-        <thead><tr><th>Fecha</th><th class="num">Jornada prom.</th>
-          <th class="num">Trabajadores</th></tr></thead>
-        <tbody>${lista.map(x => `<tr>
-          <td class="ln">${esc(x.fecha)}</td>
           <td class="num">${x.duracion || '—'}</td>
-          <td class="num">${n0(x.trabajadores)}</td>
+          <td class="num">${n0(x.dias_calculables)}</td>
         </tr>`).join('')}</tbody>
       </table>
     </div>`;
@@ -406,57 +376,72 @@ function barras(datos, sufijo = '') {
 }
 
 // ============================================================
-//  DÍAS A REVISAR
+//  A REVISAR · incompletos y ausencias
 // ============================================================
 function vistaRevisar(c) {
-  const d = S.datos;
-  const lista = d.revisar || [];
+  const d = S.datos, t = d.total;
 
-  if (!lista.length) {
+  if (d.vacio) {
     c.innerHTML = `<div class="vacio"><h3>Nada que revisar</h3>
-      <p>Todos los trabajadores del período tienen entrada y salida bien marcadas.</p></div>`;
+      <p>Todos los trabajadores activos del período marcaron entrada y salida.</p></div>`;
     return;
   }
 
   c.innerHTML = `
     <div class="kpis">
-      <div class="kpi"><div class="l">Registros a revisar</div>
-        <div class="v" style="color:var(--danger)">${n0(d.total_revisar)}</div>
+      <div class="kpi acc"><div class="l">Casos a revisar</div>
+        <div class="v" style="color:var(--danger)">${n0(t.casos)}</div>
         <div class="s">${esc(periodoTexto())}</div></div>
-      <div class="kpi"><div class="l">Con jornada calculable</div>
-        <div class="v">${n0(d.total.dias_calculables)}</div></div>
-      <div class="kpi"><div class="l">Total de registros</div>
-        <div class="v">${n0(d.total.dias_registrados)}</div>
-        <div class="s">trabajador × día</div></div>
+      <div class="kpi"><div class="l">Sin marcar</div>
+        <div class="v">${n0(t.sin_marcar)}</div>
+        <div class="s">no registraron nada</div></div>
+      <div class="kpi"><div class="l">Marcación incompleta</div>
+        <div class="v">${n0(t.incompletos)}</div>
+        <div class="s">falta entrada o salida</div></div>
+      <div class="kpi"><div class="l">Trabajadores activos</div>
+        <div class="v">${n0(t.trabajadores_activos)}</div></div>
+      <div class="kpi"><div class="l">Con jornada completa</div>
+        <div class="v">${n0(t.registros_completos)}</div></div>
     </div>
 
     <div class="card" style="padding:14px 18px">
-      <p class="sub" style="margin:0">Días sin jornada calculable: falta la entrada
-        o la salida, o las dos marcas quedaron a menos de 30 minutos (suele ser
-        alguien que marcó dos veces al entrar). Incluye también a quienes
-        <strong>no marcaron nada</strong>: sus celdas venían vacías en el Excel,
-        así que no hay registro que guardar. Ninguno entra en los promedios.</p>
+      <p class="sub" style="margin:0">Aquí están los casos que no se pueden medir:
+        quien marcó solo la entrada, solo la salida, o no marcó nada. Las ausencias
+        no existen como registro —las celdas vacías del Excel no se guardan— así que
+        se deducen comparando la lista de activos con quienes sí marcaron.</p>
     </div>
 
+    ${(d.por_motivo || []).length ? `
     <div class="card">
-      <h3>Detalle</h3>
-      <p class="sub">${lista.length < d.total_revisar
-        ? `Mostrando los primeros ${lista.length} de ${d.total_revisar}. Filtra por mes o trabajador para acotar.`
-        : 'Ordenados por fecha.'}</p>
+      <h3>Casos por situación</h3>
+      ${barras(d.por_motivo.map(x => ({ etiqueta: x.motivo, valor: x.casos })), '')}
+    </div>` : ''}
+
+    ${seccionSupRevisar(d)}
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;
+                  gap:14px;flex-wrap:wrap;margin-bottom:6px">
+        <div>
+          <h3 style="margin:0">Detalle</h3>
+          <p class="sub" style="margin:6px 0 0">${d.revisar.length < d.total_revisar
+            ? `Mostrando ${n0(d.revisar.length)} de ${n0(d.total_revisar)}. El Excel trae todos.`
+            : 'Ordenados por fecha y nombre.'}</p>
+        </div>
+        ${botonExcel(API.urlRevisarExcel(filtros()), 'Descargar Excel')}
+      </div>
       <div class="twrap">
         <table class="ft">
-          <thead><tr><th>Fecha</th><th class="num">Código</th><th>Nombre</th>
-            <th>Supervisor</th>
-            <th class="num">Entrada</th><th class="num">Salida</th>
-            <th class="num">Marcas</th><th>Motivo</th></tr></thead>
-          <tbody>${lista.map(x => `<tr>
-            <td>${esc(x.fecha || '—')}</td>
-            <td class="num">${esc(x.codigo)}</td>
+          <thead><tr><th class="num">Código</th><th>Nombre</th><th>Supervisor</th>
+            <th>Fecha</th><th class="num">Hora inicio</th><th class="num">Hora fin</th>
+            <th>Situación</th></tr></thead>
+          <tbody>${d.revisar.map(x => `<tr${x.sin_registro ? ' style="opacity:.7"' : ''}>
+            <td class="num">${esc(x.codigo ?? '—')}</td>
             <td class="ln">${esc(x.nombre)}</td>
-            <td>${esc(x.departamento || '—')}</td>
+            <td>${esc(x.supervisor || '—')}</td>
+            <td>${esc(x.fecha || '—')}</td>
             <td class="num">${x.entrada || '—'}</td>
             <td class="num">${x.salida || '—'}</td>
-            <td class="num">${x.n_marcas}</td>
             <td><span class="sem ${x.sin_registro ? 'sem-deficiente' : 'sem-bajo'}">${esc(x.motivo)}</span></td>
           </tr>`).join('')}</tbody>
         </table>
@@ -464,6 +449,179 @@ function vistaRevisar(c) {
     </div>`;
 }
 
+function seccionSupRevisar(d) {
+  const sup = (d.supervisores || []).filter(x => typeof x === 'object');
+  const conNombre = sup.filter(x => x.supervisor !== 'Sin asignar');
+  if (!conNombre.length) return '';
+
+  return `
+    <div class="card">
+      <h3>Supervisores con más casos</h3>
+      <p class="sub">Casos por trabajador, para comparar equipos de distinto tamaño.</p>
+      ${barras(sup.map(x => ({ etiqueta: x.supervisor, valor: x.casos_por_trabajador,
+        extra: `${n2(x.casos_por_trabajador, 1)} · ${x.casos} casos` })), '')}
+      <div class="twrap" style="max-height:none;margin-top:18px">
+        <table class="ft">
+          <thead><tr><th>Supervisor</th><th class="num">Trabajadores</th>
+            <th class="num">Casos</th><th class="num">Sin marcar</th>
+            <th class="num">Incompletos</th>
+            <th class="num">Casos por trabajador</th></tr></thead>
+          <tbody>${sup.map(x => `<tr>
+            <td class="ln">${esc(x.supervisor)}</td>
+            <td class="num">${n0(x.trabajadores)}</td>
+            <td class="num">${n0(x.casos)}</td>
+            <td class="num">${n0(x.sin_marcar)}</td>
+            <td class="num">${n0(x.incompletos)}</td>
+            <td class="num">${n2(x.casos_por_trabajador, 2)}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ============================================================
+//  TRABAJADORES ACTIVOS
+// ============================================================
+async function vistaPersonal(c) {
+  c.innerHTML = `<div class="cargando">Cargando…</div>`;
+  let nom, pend = { pendientes: [] };
+  try {
+    nom = await API.nomina();
+    try { pend = await API.sinCruzar(S.empresaId); } catch { /* sin datos aún */ }
+  } catch (e) { c.innerHTML = `<div class="msg msg-err">${esc(e.message)}</div>`; return; }
+
+  const resumen = nom.resumen || [];
+  const total = resumen.reduce((a, x) => a + Number(x.total || 0), 0);
+  const sinCruzar = pend.pendientes || [];
+
+  c.innerHTML = `
+    <div class="card">
+      <h3>Trabajadores activos</h3>
+      <p class="sub">La lista de quienes trabajan hoy, de <strong>todas las empresas
+        en un solo archivo</strong>. La empresa viene en la columna del Excel, así que
+        no hay que elegirla aquí. Cada carga reemplaza por completo la anterior.</p>
+
+      <div class="msg msg-warn" style="margin:0 0 16px">
+        <strong>Esta tabla va primero.</strong> Sin ella no se pueden cargar
+        asistencias: el sistema no tendría contra qué cruzar y todos los registros
+        quedarían como inactivos.
+      </div>
+
+      <div class="fbar" style="margin-bottom:14px">
+        <div class="sp"></div>
+        <a class="btn btn-ghost" href="${API.urlFormatoNomina()}" download>
+          Descargar formato en blanco</a>
+      </div>
+
+      <div class="card" style="padding:14px 18px;margin:0 0 16px;background:var(--cream)">
+        <p class="sub" style="margin:0"><strong>Columnas del archivo:</strong>
+          Codigo · Nombre Del Trabajador · Employee ID · estado · id · supervisor · empresa</p>
+        <p class="sub" style="margin:10px 0 0">La columna <strong>id</strong> es la
+          llave del cruce: <em>EmployeeID_Nombre</em>, con el nombre tal como viene
+          del huellero. El Employee ID por sí solo no basta porque se repite entre
+          personas distintas.</p>
+        <p class="sub" style="margin:10px 0 0">En <strong>empresa</strong>:
+          1 = Palmeras de Yarima · 2 = Villa Claudia · 3 = CUCÚ.</p>
+      </div>
+
+      <div class="dz" id="nZ" style="padding:22px">
+        <div class="m">Arrastra el Excel de trabajadores o haz clic</div>
+        <div class="s">.xlsx con las siete columnas</div>
+        <input type="file" id="nF" accept=".xlsx,.xlsm" hidden>
+      </div>
+      <div id="nCh"></div>
+      <div style="margin-top:14px">
+        <button class="btn btn-primary" id="nS" disabled>Cargar trabajadores</button>
+      </div>
+      <div id="nM"></div>
+    </div>
+
+    ${resumen.length ? `
+    <div class="card">
+      <h3>Lo que hay cargado</h3>
+      <div class="twrap" style="max-height:none">
+        <table class="ft">
+          <thead><tr><th>Empresa</th><th class="num">Trabajadores</th>
+            <th class="num">Con id de cruce</th><th class="num">Con supervisor</th>
+            <th>Última carga</th></tr></thead>
+          <tbody>${resumen.map(x => `<tr>
+            <td class="ln">${esc(x.empresa)}</td>
+            <td class="num">${n0(x.total)}</td>
+            <td class="num">${n0(x.con_id)}</td>
+            <td class="num">${x.con_supervisor ? n0(x.con_supervisor)
+              : `<span class="sem sem-bajo">0</span>`}</td>
+            <td>${String(x.ultima_carga || '').slice(0, 16).replace('T', ' ')}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+      ${resumen.some(x => !x.con_supervisor) ? `
+      <p class="sub" style="margin:14px 0 0">Todavía no hay supervisores cargados.
+        Cuando llenes esa columna, los análisis por equipo aparecen solos: no hay
+        que volver a subir las asistencias.</p>` : ''}
+    </div>` : `<div class="msg msg-warn">Aún no hay trabajadores cargados.</div>`}
+
+    ${sinCruzar.length ? `
+    <div class="card">
+      <h3>Gente del huellero que no cruzó</h3>
+      <p class="sub">Estos ${n0(sinCruzar.length)} tienen marcaciones pero su
+        <strong>id compuesto</strong> no está en la tabla de trabajadores, así que
+        no aparecen en los análisis. Copia el id tal cual a la columna <em>id</em>
+        del Excel si son gente activa.</p>
+      <div class="twrap">
+        <table class="ft">
+          <thead><tr><th class="num">Employee ID</th><th>Nombre en el huellero</th>
+            <th>id compuesto</th><th class="num">Marcaciones</th></tr></thead>
+          <tbody>${sinCruzar.slice(0, 200).map(x => `<tr>
+            <td class="num">${esc(x.codigo)}</td>
+            <td class="ln">${esc(x.nombre)}</td>
+            <td><code style="font-size:12.5px">${esc(x.id_compuesto)}</code></td>
+            <td class="num">${n0(x.marcaciones)}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>` : ''}`;
+
+  let archivo = null;
+  const z = $('#nZ'), inp = $('#nF'), btn = $('#nS');
+  z.onclick = () => inp.click();
+  inp.onchange = e => {
+    archivo = e.target.files[0];
+    if (archivo) {
+      $('#nCh').innerHTML = `<div class="chip">📄 ${esc(archivo.name)}</div>`;
+      btn.disabled = false;
+    }
+  };
+  ['dragenter', 'dragover'].forEach(ev => z.addEventListener(ev, e => {
+    e.preventDefault(); z.classList.add('over');
+  }));
+  ['dragleave', 'drop'].forEach(ev => z.addEventListener(ev, e => {
+    e.preventDefault(); z.classList.remove('over');
+  }));
+  z.addEventListener('drop', e => {
+    archivo = e.dataTransfer.files[0];
+    if (archivo) {
+      $('#nCh').innerHTML = `<div class="chip">📄 ${esc(archivo.name)}</div>`;
+      btn.disabled = false;
+    }
+  });
+
+  btn.onclick = async () => {
+    if (!confirm('Vas a reemplazar la tabla de trabajadores activos de TODAS ' +
+                 'las empresas.\n\nLa anterior se borra. ¿Continuar?')) return;
+    btn.disabled = true; btn.textContent = 'Cargando…';
+    try {
+      const r = await API.cargarNomina(archivo);
+      const av = (r.advertencias || []).length
+        ? `<ul>${r.advertencias.map(a => `<li>${esc(a)}</li>`).join('')}</ul>` : '';
+      $('#nM').innerHTML = `<div class="msg ${av ? 'msg-warn' : 'msg-ok'}">
+        ${r.insertados} trabajadores cargados
+        (${r.borrados} de la carga anterior reemplazados).${av}</div>`;
+      setTimeout(() => vistaPersonal(c), 1400);
+    } catch (e) {
+      $('#nM').innerHTML = `<div class="msg msg-err">${esc(e.message)}</div>`;
+    } finally { btn.disabled = false; btn.textContent = 'Cargar trabajadores'; }
+  };
+}
 // ============================================================
 //  CARGAR DATOS
 // ============================================================
@@ -698,7 +856,7 @@ function vistaCarga(c) {
         (${res.dias_completos || 0} calculables, ${res.dias_incompletos || 0} a revisar)
         ${r.reemplazadas ? ` · ${r.reemplazadas} registros reemplazados` : ''}.
         ${av}</div>`;
-      S.empresaId = eid; S.zonaId = String(zid);
+      S.empresaId = eid;
       S.anio = String(anio); S.mes = String(mes); S.dia = '';
       $('#aEm').value = eid;
     } catch (e) {

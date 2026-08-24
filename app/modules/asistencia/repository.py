@@ -158,6 +158,17 @@ def obtener_o_crear_periodo(cur, empresa_id: int, zona_id: int, anio: int,
     return cur.fetchone()["id"]
 
 
+def registrar_en_periodo(cur, periodo_id: int, trabajador_id: int):
+    """
+    Deja constancia de que la persona venía en el archivo de ese
+    período, marcara o no. Es el denominador del % de marcación.
+    """
+    cur.execute("""
+        INSERT INTO plantacion.asis_periodo_trabajador (periodo_id, trabajador_id)
+        VALUES (%s,%s) ON CONFLICT DO NOTHING
+    """, (periodo_id, trabajador_id))
+
+
 def borrar_marcaciones(cur, periodo_id: int) -> int:
     cur.execute("DELETE FROM plantacion.asis_marcacion WHERE periodo_id=%s",
                 (periodo_id,))
@@ -180,19 +191,24 @@ def eliminar_periodo(empresa_id: int, zona_id: int, anio: int, mes: int) -> bool
 def obtener_o_crear_trabajador(cur, empresa_id: int, zona_id: int,
                                codigo: str, nombre: str) -> int:
     """
-    La llave incluye la ZONA porque cada huellero numera a su gente
-    por su cuenta: el empleado 65 de Peroles y el 65 de Castillo son
-    personas distintas. Dentro de una zona, el código une el histórico
-    de la persona entre meses.
+    La llave es (empresa, id_compuesto), donde id_compuesto es
+    "EmployeeID_Nombre". El Employee ID solo no basta: se repite entre
+    personas distintas, y fusionarlas mezclaría sus marcaciones.
+
+    `zona_id` se guarda como referencia de la última zona donde se la
+    vio, pero no forma parte de la llave: la misma persona puede marcar
+    en varios huelleros.
     """
+    id_compuesto = f"{codigo}_{nombre}"
     cur.execute("""
         INSERT INTO plantacion.asis_trabajador
-            (empresa_id, zona_id, codigo, nombre)
-        VALUES (%s,%s,%s,%s)
-        ON CONFLICT (empresa_id, zona_id, codigo)
-            DO UPDATE SET nombre = EXCLUDED.nombre
+            (empresa_id, zona_id, codigo, nombre, id_compuesto)
+        VALUES (%s,%s,%s,%s,%s)
+        ON CONFLICT (empresa_id, id_compuesto)
+            DO UPDATE SET nombre = EXCLUDED.nombre,
+                          zona_id = EXCLUDED.zona_id
         RETURNING id
-    """, (empresa_id, zona_id, str(codigo), nombre))
+    """, (empresa_id, zona_id, str(codigo), nombre, id_compuesto))
     return cur.fetchone()["id"]
 
 
@@ -361,3 +377,210 @@ def dias_con_registro(empresa_id: int, anio: int, mes: int,
         params.append(zona_id)
     sql += " ORDER BY m.dia"
     return [f["dia"] for f in db.fetch_all(sql, tuple(params))]
+
+
+# ============================================================
+#  NÓMINA DE TRABAJADORES ACTIVOS
+#  Una sola tabla para todas las empresas. Cada carga la reemplaza.
+# ============================================================
+
+def hay_nomina(empresa_id: int | None = None) -> int:
+    sql = "SELECT COUNT(*) AS n FROM plantacion.asis_trabajador_activo"
+    params: tuple = ()
+    if empresa_id:
+        sql += " WHERE empresa_id = %s"
+        params = (empresa_id,)
+    return (db.fetch_one(sql, params) or {}).get("n", 0)
+
+
+def reemplazar_nomina(cur, registros: list[dict],
+                      archivo=None, usuario=None) -> dict:
+    """Borra TODA la nómina y carga la nueva. La empresa viene en el archivo."""
+    cur.execute("DELETE FROM plantacion.asis_trabajador_activo")
+    borrados = cur.rowcount
+
+    insertados = 0
+    for r in registros:
+        cur.execute("""
+            INSERT INTO plantacion.asis_trabajador_activo
+                (empresa_id, codigo, nombre, employee_id, id_compuesto,
+                 supervisor, estado, fila_excel, archivo, cargado_por)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """, (r["empresa_id"], r["codigo"], r["nombre"], r.get("employee_id"),
+              r.get("id_compuesto"), r.get("supervisor"), r.get("estado", 1),
+              r.get("fila_excel"), archivo, usuario))
+        insertados += 1
+
+    return {"borrados": borrados, "insertados": insertados}
+
+
+def resumen_nomina() -> list[dict]:
+    return db.fetch_all("""
+        SELECT a.empresa_id, e.nombre AS empresa,
+               COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE a.id_compuesto IS NOT NULL) AS con_id,
+               COUNT(*) FILTER (WHERE a.supervisor IS NOT NULL) AS con_supervisor,
+               MAX(a.cargado_at) AS ultima_carga, MAX(a.archivo) AS archivo
+        FROM plantacion.asis_trabajador_activo a
+        JOIN plantacion.fert_empresa e ON e.id = a.empresa_id
+        GROUP BY a.empresa_id, e.nombre, e.orden ORDER BY e.orden
+    """)
+
+
+def cruzar_periodo(cur, periodo_id: int) -> dict:
+    """Congela el cruce contra la nómina para ese período."""
+    cur.execute("SELECT * FROM plantacion.asis_cruzar_periodo(%s)", (periodo_id,))
+    fila = cur.fetchone() or {}
+    return {"activos": fila.get("activos", 0),
+            "inactivos": fila.get("inactivos", 0)}
+
+
+def sin_cruzar(empresa_id: int, limite: int = 300) -> list[dict]:
+    """
+    Gente del huellero cuyo id compuesto no está en la nómina.
+    Sirve para corregir la columna `id` del Excel de trabajadores.
+    """
+    return db.fetch_all("""
+        SELECT DISTINCT t.codigo, t.nombre, t.id_compuesto,
+               COUNT(m.id) AS marcaciones
+        FROM plantacion.asis_marcacion m
+        JOIN plantacion.asis_trabajador t ON t.id = m.trabajador_id
+        WHERE t.empresa_id = %s AND m.estado_activo = 0
+        GROUP BY t.codigo, t.nombre, t.id_compuesto
+        ORDER BY COUNT(m.id) DESC, t.nombre
+        LIMIT %s
+    """, (empresa_id, limite))
+
+
+def supervisores_disponibles(empresa_id: int) -> list[str]:
+    filas = db.fetch_all("""
+        SELECT DISTINCT supervisor AS v
+        FROM plantacion.asis_trabajador_activo
+        WHERE empresa_id = %s AND supervisor IS NOT NULL AND supervisor <> ''
+        ORDER BY v
+    """, (empresa_id,))
+    return [f["v"] for f in filas]
+
+
+# ============================================================
+#  CONSULTAS DEL ANÁLISIS · sobre la vista v_asistencia
+# ============================================================
+
+_FILTROS = """
+    WHERE v.empresa_id = %s
+"""
+
+
+def _armar_filtros(empresa_id: int, anio=None, mes=None, dia=None,
+                   trabajador=None, supervisor=None) -> tuple[str, list]:
+    sql = " WHERE v.empresa_id = %s"
+    params: list = [empresa_id]
+    if anio:
+        sql += " AND v.anio = %s"
+        params.append(anio)
+    if mes:
+        sql += " AND v.mes = %s"
+        params.append(mes)
+    if dia:
+        sql += " AND v.dia = %s"
+        params.append(dia)
+    if trabajador and str(trabajador).strip():
+        sql += " AND (v.nombre ILIKE %s OR v.codigo ILIKE %s)"
+        patron = f"%{str(trabajador).strip()}%"
+        params.extend([patron, patron])
+    if supervisor and str(supervisor).strip():
+        if str(supervisor).strip().lower() in ("sin asignar", "(sin asignar)"):
+            sql += " AND (v.supervisor IS NULL OR v.supervisor = '')"
+        else:
+            sql += " AND v.supervisor = %s"
+            params.append(str(supervisor).strip())
+    return sql, params
+
+
+def marcaciones_vista(empresa_id: int, anio=None, mes=None, dia=None,
+                      trabajador=None, supervisor=None,
+                      solo_completos: bool = False) -> list[dict]:
+    """
+    Marcaciones de trabajadores activos, UNA por persona y fecha.
+
+    Una persona aparece en el archivo de varios huelleros y puede marcar
+    en más de uno el mismo día. Sin deduplicar, ese día se contaría
+    varias veces. Se conserva la mejor: primero la que tiene jornada
+    calculable, luego la de mayor duración.
+    """
+    filtro, params = _armar_filtros(empresa_id, anio, mes, dia,
+                                    trabajador, supervisor)
+    sql = """
+        SELECT DISTINCT ON (v.trabajador_id, v.fecha)
+               v.marcacion_id, v.codigo, v.nombre, v.supervisor,
+               v.trabajador_id, v.cod_huellero, v.id_compuesto,
+               v.fecha, v.dia, v.anio, v.mes,
+               v.entrada, v.salida, v.minutos, v.horas,
+               v.estado_marcacion AS estado, v.n_marcas, v.zona
+        FROM plantacion.v_asistencia v
+    """ + filtro
+    if solo_completos:
+        sql += " AND v.estado_marcacion = 'completo'"
+    sql += """
+        ORDER BY v.trabajador_id, v.fecha,
+                 (v.estado_marcacion = 'completo') DESC,
+                 v.minutos DESC NULLS LAST, v.marcacion_id
+    """
+    filas = db.fetch_all(sql, tuple(params))
+    filas.sort(key=lambda f: ((f.get("nombre") or "").lower(), str(f.get("fecha"))))
+    return filas
+
+
+def padron_activo(empresa_id: int, anio=None, mes=None,
+                  supervisor=None) -> list[dict]:
+    """
+    Trabajadores activos que debían marcar en el período.
+    Es el denominador del porcentaje de marcación.
+    """
+    sql = """
+        SELECT DISTINCT ON (p.trabajador_id)
+               p.trabajador_id, p.codigo, p.nombre, p.supervisor, p.id_compuesto
+        FROM plantacion.v_asis_padron p
+        WHERE p.empresa_id = %s
+    """
+    params: list = [empresa_id]
+    if anio:
+        sql += " AND p.anio = %s"
+        params.append(anio)
+    if mes:
+        sql += " AND p.mes = %s"
+        params.append(mes)
+    if supervisor and str(supervisor).strip():
+        if str(supervisor).strip().lower() in ("sin asignar", "(sin asignar)"):
+            sql += " AND (p.supervisor IS NULL OR p.supervisor = '')"
+        else:
+            sql += " AND p.supervisor = %s"
+            params.append(str(supervisor).strip())
+    sql += " ORDER BY p.trabajador_id, p.nombre"
+    filas = db.fetch_all(sql, tuple(params))
+    filas.sort(key=lambda f: (f.get("nombre") or "").lower())
+    return filas
+
+
+def anios_vista(empresa_id: int) -> list[int]:
+    filas = db.fetch_all("""
+        SELECT DISTINCT anio FROM plantacion.v_asistencia
+        WHERE empresa_id = %s ORDER BY anio DESC
+    """, (empresa_id,))
+    return [f["anio"] for f in filas]
+
+
+def meses_vista(empresa_id: int, anio: int) -> list[int]:
+    filas = db.fetch_all("""
+        SELECT DISTINCT mes FROM plantacion.v_asistencia
+        WHERE empresa_id = %s AND anio = %s ORDER BY mes
+    """, (empresa_id, anio))
+    return [f["mes"] for f in filas]
+
+
+def dias_vista(empresa_id: int, anio: int, mes: int) -> list[int]:
+    filas = db.fetch_all("""
+        SELECT DISTINCT dia FROM plantacion.v_asistencia
+        WHERE empresa_id = %s AND anio = %s AND mes = %s ORDER BY dia
+    """, (empresa_id, anio, mes))
+    return [f["dia"] for f in filas]

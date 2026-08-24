@@ -10,8 +10,9 @@ from fastapi.responses import Response
 
 from ...core import db, security
 from . import repository as repo
-from .calc import analizar, resumen_trabajador
-from . import formato2
+from .calc import (analizar, analizar_completos, analizar_revisar,
+                   resumen_trabajador)
+from . import formato2, nomina
 from .excel_loader import dias_del_mes, generar_formato, leer_excel, nombre_mes
 
 router = APIRouter(prefix="/api/asistencia", tags=["asistencia"])
@@ -184,6 +185,15 @@ async def post_carga(
     zona = repo.zona_por_id(zid)
 
     lector = formato2.leer_excel if formato == 2 else leer_excel
+    # Sin nómina no hay contra qué cruzar: los datos entrarían todos
+    # como inactivos y no se verían en el análisis.
+    if not repo.hay_nomina(empresa_id):
+        raise HTTPException(400, {
+            "mensaje": f"No hay trabajadores activos cargados para "
+                       f"«{empresa['nombre']}». Carga primero la tabla de "
+                       f"trabajadores en la pestaña Trabajadores activos.",
+            "advertencias": []})
+
     resultado, advertencias = lector(await archivo.read(), anio, mes)
     trabajadores = (resultado or {}).get("trabajadores") or []
     if not trabajadores:
@@ -208,6 +218,9 @@ async def post_carga(
                 repo.guardar_marcacion(cur, periodo_id, tid, d)
                 guardadas += 1
 
+        # Congelar el cruce contra la nómina de ESTE momento
+        cruce = repo.cruzar_periodo(cur, periodo_id)
+
     return {"ok": True, "anio": anio, "mes": mes,
             "mes_nombre": nombre_mes(mes), "formato": formato,
             "empresa_id": empresa_id, "empresa": empresa["nombre"],
@@ -215,6 +228,7 @@ async def post_carga(
             "archivo": archivo.filename, "dias_mes": total_dias,
             "trabajadores": len(trabajadores),
             "marcaciones": guardadas, "reemplazadas": borradas,
+            "cruce": cruce,
             "resumen": resultado.get("resumen", {}),
             "advertencias": advertencias}
 
@@ -223,61 +237,210 @@ async def post_carga(
 #  ANÁLISIS
 # ============================================================
 
+def _contexto(eid: int, anio, mes, dia, supervisor) -> dict:
+    """Valores para los desplegables, siempre sobre trabajadores activos."""
+    return {
+        "anios": repo.anios_vista(eid),
+        "meses": [{"mes": m, "nombre": nombre_mes(m)}
+                  for m in (repo.meses_vista(eid, anio) if anio else [])],
+        "dias": repo.dias_vista(eid, anio, mes) if (anio and mes) else [],
+        "supervisores": repo.supervisores_disponibles(eid),
+        "nomina": repo.resumen_nomina(),
+    }
+
+
 @router.get("/analisis")
 def get_analisis(empresa_id: int | None = Query(None),
-                 zona_id: int | None = Query(None),
                  anio: int | None = Query(None),
                  mes: int | None = Query(None),
                  dia: int | None = Query(None),
                  trabajador: str | None = Query(None),
-                 departamento: str | None = Query(None),
+                 supervisor: str | None = Query(None),
                  top: int = Query(10, ge=5, le=50),
                  _=Depends(sesion)):
     """
-    Análisis de asistencia.
+    Jornadas de los trabajadores activos.
 
-    Los promedios se calculan sobre los días CON REGISTRO, nunca sobre
-    los días del calendario: los domingos y festivos no bajan a nadie.
+    Solo entran los días con entrada Y salida: es donde se miden
+    horarios y duraciones. Los casos incompletos y las ausencias van
+    a la pestaña «A revisar».
 
-    Sin filtros de fecha promedia todo el histórico de la empresa.
-    Con año, ese año. Con año y mes, ese mes. Con día, ese día exacto
-    (y entonces el "promedio" es el dato del día).
+    No se separa por zona: una persona puede marcar hoy en Vizcaina y
+    mañana en Peroles, y sigue siendo su misma jornada. Cada día suyo
+    aparece una sola vez.
     """
     eid = _empresa(empresa_id)
-    zid = _zona(eid, zona_id)
-    filas = repo.listar_marcaciones(eid, anio, mes, dia, trabajador, zid,
-                                    departamento)
+    filas = repo.marcaciones_vista(eid, anio, mes, dia, trabajador, supervisor)
+    padron = repo.padron_activo(eid, anio, mes, supervisor)
 
-    # Padrón completo: los trabajadores registrados en el huellero, para
-    # que la tabla los muestre a todos aunque un día no hayan marcado.
-    # Solo tiene sentido cuando NO se está buscando a alguien concreto.
-    padron = None
-    if not (trabajador and trabajador.strip()):
-        padron = repo.listar_trabajadores(eid, zid)
-        if departamento and departamento.strip():
-            # Con un supervisor filtrado, el padrón se limita a su gente
-            ids = {f["trabajador_id"] for f in filas}
-            padron = [t for t in padron if t["id"] in ids]
-
-    resultado = analizar(filas, top, padron, un_dia=bool(dia))
     empresa = repo.empresa_por_id(eid)
-    zona = repo.zona_por_id(zid) if zid else None
-
-    dias = repo.dias_con_registro(eid, anio, mes, zid) if (anio and mes) else []
-
     return {"ok": True, "empresa_id": eid,
             "empresa": empresa["nombre"] if empresa else None,
-            "zona_id": zid, "zona": zona["nombre"] if zona else None,
             "anio": anio, "mes": mes, "dia": dia,
             "mes_nombre": nombre_mes(mes) if mes else None,
-            "departamento": departamento,
-            "departamentos": repo.departamentos_disponibles(eid, zid, anio, mes),
-            "zonas": repo.listar_zonas(eid),
-            "anios": repo.anios_disponibles(eid, zid),
-            "meses": [{"mes": m, "nombre": nombre_mes(m)}
-                      for m in (repo.meses_disponibles(eid, anio, zid) if anio else [])],
-            "dias": dias,
-            **resultado}
+            "supervisor": supervisor,
+            **analizar_completos(filas, padron, top),
+            **_contexto(eid, anio, mes, dia, supervisor)}
+
+
+@router.get("/revisar")
+def get_revisar(empresa_id: int | None = Query(None),
+                anio: int | None = Query(None),
+                mes: int | None = Query(None),
+                dia: int | None = Query(None),
+                trabajador: str | None = Query(None),
+                supervisor: str | None = Query(None),
+                top: int = Query(10, ge=5, le=50),
+                _=Depends(sesion)):
+    """
+    Casos a revisar: solo entrada, solo salida o ninguna marca.
+
+    Las ausencias no existen como registro (las celdas vacías del Excel
+    no se guardan), así que se deducen comparando el padrón de activos
+    con quienes sí tienen marcación.
+    """
+    eid = _empresa(empresa_id)
+    filas = repo.marcaciones_vista(eid, anio, mes, dia, trabajador, supervisor)
+    padron = repo.padron_activo(eid, anio, mes, supervisor)
+
+    empresa = repo.empresa_por_id(eid)
+    return {"ok": True, "empresa_id": eid,
+            "empresa": empresa["nombre"] if empresa else None,
+            "anio": anio, "mes": mes, "dia": dia,
+            "mes_nombre": nombre_mes(mes) if mes else None,
+            "supervisor": supervisor,
+            **analizar_revisar(filas, padron, un_dia=bool(dia), top=top),
+            **_contexto(eid, anio, mes, dia, supervisor)}
+
+
+# ============================================================
+#  DESCARGAS
+# ============================================================
+
+def _texto_filtros(empresa, anio, mes, dia, supervisor, trabajador) -> str:
+    partes = [f"Empresa: {empresa or 'todas'}"]
+    partes.append(f"Año: {anio or 'todos'}")
+    partes.append(f"Mes: {nombre_mes(mes) if mes else 'todos'}")
+    partes.append(f"Día: {dia or 'todos'}")
+    if supervisor:
+        partes.append(f"Supervisor: {supervisor}")
+    if trabajador:
+        partes.append(f"Búsqueda: {trabajador}")
+    return "Filtros aplicados\n" + "\n".join(partes)
+
+
+@router.get("/analisis/excel")
+def get_analisis_excel(empresa_id: int | None = Query(None),
+                       anio: int | None = Query(None),
+                       mes: int | None = Query(None),
+                       dia: int | None = Query(None),
+                       trabajador: str | None = Query(None),
+                       supervisor: str | None = Query(None),
+                       _=Depends(sesion)):
+    """Excel con los trabajadores que sí marcaron entrada y salida."""
+    eid = _empresa(empresa_id)
+    filas = repo.marcaciones_vista(eid, anio, mes, dia, trabajador,
+                                   supervisor, solo_completos=True)
+    empresa = repo.empresa_por_id(eid)
+
+    columnas = ["Código", "Nombre", "Supervisor", "Fecha",
+                "Hora inicio", "Hora fin", "Duración jornada", "Horas"]
+    datos = []
+    for f in filas:
+        minutos = f.get("minutos")
+        datos.append([
+            f.get("codigo"), f.get("nombre"), f.get("supervisor"),
+            str(f.get("fecha")),
+            f["entrada"].strftime("%H:%M") if f.get("entrada") else None,
+            f["salida"].strftime("%H:%M") if f.get("salida") else None,
+            f"{minutos // 60}h {minutos % 60:02d}m" if minutos is not None else None,
+            round(minutos / 60, 2) if minutos is not None else None,
+        ])
+
+    contenido = nomina.exportar_tabla(
+        "asistencia", columnas, datos,
+        _texto_filtros(empresa["nombre"] if empresa else None,
+                       anio, mes, dia, supervisor, trabajador))
+    return Response(content=contenido, media_type=XLSX,
+                    headers={"Content-Disposition":
+                             'attachment; filename="asistencia.xlsx"'})
+
+
+@router.get("/revisar/excel")
+def get_revisar_excel(empresa_id: int | None = Query(None),
+                      anio: int | None = Query(None),
+                      mes: int | None = Query(None),
+                      dia: int | None = Query(None),
+                      trabajador: str | None = Query(None),
+                      supervisor: str | None = Query(None),
+                      _=Depends(sesion)):
+    """Excel con los casos a revisar."""
+    eid = _empresa(empresa_id)
+    filas = repo.marcaciones_vista(eid, anio, mes, dia, trabajador, supervisor)
+    padron = repo.padron_activo(eid, anio, mes, supervisor)
+    empresa = repo.empresa_por_id(eid)
+
+    r = analizar_revisar(filas, padron, un_dia=bool(dia))
+    columnas = ["Código", "Nombre", "Supervisor", "Fecha",
+                "Hora inicio", "Hora fin", "Situación"]
+    datos = [[x.get("codigo"), x.get("nombre"), x.get("supervisor"),
+              x.get("fecha"), x.get("entrada"), x.get("salida"),
+              x.get("motivo")] for x in r["revisar"]]
+
+    contenido = nomina.exportar_tabla(
+        "casos a revisar", columnas, datos,
+        _texto_filtros(empresa["nombre"] if empresa else None,
+                       anio, mes, dia, supervisor, trabajador))
+    return Response(content=contenido, media_type=XLSX,
+                    headers={"Content-Disposition":
+                             'attachment; filename="casos_a_revisar.xlsx"'})
+
+
+# ============================================================
+#  TRABAJADORES ACTIVOS
+# ============================================================
+
+@router.get("/nomina")
+def get_nomina(_=Depends(sesion)):
+    return {"ok": True, "resumen": repo.resumen_nomina()}
+
+
+@router.get("/nomina/formato")
+def get_formato_nomina(_=Depends(sesion)):
+    return Response(content=nomina.generar_formato(), media_type=XLSX,
+                    headers={"Content-Disposition":
+                             'attachment; filename="trabajadores_activos.xlsx"'})
+
+
+@router.post("/nomina/carga")
+async def post_nomina(archivo: UploadFile = File(...), usuario=Depends(sesion)):
+    """
+    Carga la tabla de trabajadores activos de TODAS las empresas.
+    La empresa viene en el archivo, así que no se elige aquí.
+    Cada carga reemplaza por completo la anterior.
+    """
+    if not archivo.filename.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(400, "El archivo debe ser .xlsx")
+
+    registros, advertencias = nomina.leer_nomina(await archivo.read())
+    if not registros:
+        raise HTTPException(400, {"mensaje": "No se cargó nada.",
+                                  "advertencias": advertencias})
+
+    with db.get_cursor() as cur:
+        r = repo.reemplazar_nomina(cur, registros, archivo.filename,
+                                   usuario["usuario"])
+
+    return {"ok": True, "archivo": archivo.filename, **r,
+            "resumen": repo.resumen_nomina(),
+            "advertencias": advertencias}
+
+
+@router.get("/nomina/sin-cruzar")
+def get_sin_cruzar(empresa_id: int | None = Query(None), _=Depends(sesion)):
+    """Gente del huellero cuyo id compuesto no está en la nómina."""
+    eid = _empresa(empresa_id)
+    return {"ok": True, "empresa_id": eid, "pendientes": repo.sin_cruzar(eid)}
 
 
 @router.get("/trabajadores")

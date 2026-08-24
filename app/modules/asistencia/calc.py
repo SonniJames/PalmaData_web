@@ -49,17 +49,12 @@ def _promedio(valores: list) -> float | None:
     return sum(limpio) / len(limpio) if limpio else None
 
 
-def resumen_trabajador(marcaciones: list[dict], un_dia: bool = False) -> dict:
+def resumen_trabajador(marcaciones: list[dict]) -> dict:
     """
     Resume los días de una persona.
 
-    Los promedios se calculan sobre los días CON JORNADA CALCULABLE.
-
-    Cuando el filtro deja un solo día (`un_dia`), se muestran las horas
-    tal como se marcaron, aunque el día esté incompleto: si alguien
-    marcó solo la entrada, se ve esa entrada en vez de un guion. Con
-    una fecha concreta el usuario quiere ver lo que pasó ese día, no
-    un promedio.
+    Si el filtro deja un solo día, los promedios coinciden con ese
+    día, que es justo lo que se espera al seleccionar una fecha.
     """
     completos = [m for m in marcaciones if m.get("estado") == "completo"]
     incompletos = [m for m in marcaciones if m.get("estado") == "incompleta"]
@@ -72,14 +67,6 @@ def resumen_trabajador(marcaciones: list[dict], un_dia: bool = False) -> dict:
     prom_entrada = _promedio(entradas)
     prom_salida = _promedio(salidas)
     prom_duracion = _promedio(duraciones)
-
-    # Con un día seleccionado, mostrar lo que se marcó aunque falte una hora
-    if un_dia and marcaciones:
-        m = marcaciones[0]
-        if prom_entrada is None:
-            prom_entrada = hora_a_minutos(m.get("entrada"))
-        if prom_salida is None:
-            prom_salida = hora_a_minutos(m.get("salida"))
 
     return {
         "dias_registrados": len(marcaciones),
@@ -129,21 +116,13 @@ def motivo_revisar(f: dict) -> str:
     return "Sin marcación"
 
 
-def analizar(filas: list[dict], top: int = 10,
-             padron: list[dict] | None = None,
-             un_dia: bool = False) -> dict:
+def analizar(filas: list[dict], top: int = 10) -> dict:
     """
     Análisis completo del período filtrado.
 
-    `filas`  son las marcaciones ya filtradas por empresa, zona, año,
-             mes, día, supervisor y trabajador.
-    `padron` es la lista COMPLETA de trabajadores registrados en el
-             huellero. Sirve para que la tabla muestre a todos, incluidos
-             los que no marcaron: las celdas vacías del Excel no se
-             guardan, así que sin el padrón desaparecerían de la vista.
-    `un_dia` indica que el filtro dejó una sola fecha.
+    `filas` son marcaciones ya filtradas por empresa, año, mes y día.
     """
-    if not filas and not padron:
+    if not filas:
         return {"vacio": True}
 
     # --- Agrupar por trabajador ---
@@ -163,32 +142,14 @@ def analizar(filas: list[dict], top: int = 10,
             p["departamento"] = f["departamento"]   # el último visto manda
         p["marcaciones"].append(f)
 
-    # Los trabajadores del padrón que no marcaron en el período entran
-    # igual, con sus contadores en cero.
-    ausentes_ids = []
-    for t in (padron or []):
-        if t["id"] in por_persona:
-            continue
-        ausentes_ids.append(t["id"])
-        por_persona[t["id"]] = {
-            "trabajador_id": t["id"],
-            "codigo": t.get("codigo"),
-            "nombre": t.get("nombre"),
-            "empresa": t.get("empresa"),
-            "zona": t.get("zona"),
-            "departamento": t.get("departamento"),
-            "marcaciones": [],
-        }
-
     trabajadores = []
     for p in por_persona.values():
-        r = resumen_trabajador(p["marcaciones"], un_dia)
+        r = resumen_trabajador(p["marcaciones"])
         trabajadores.append({
             "trabajador_id": p["trabajador_id"],
             "codigo": p["codigo"], "nombre": p["nombre"],
             "empresa": p["empresa"], "zona": p["zona"],
-            "departamento": p["departamento"],
-            "sin_registro": not p["marcaciones"], **r,
+            "departamento": p["departamento"], **r,
         })
     trabajadores.sort(key=lambda x: (x["nombre"] or "").lower())
 
@@ -205,7 +166,6 @@ def analizar(filas: list[dict], top: int = 10,
 
     total = {
         "trabajadores": len(trabajadores),
-        "sin_registro": len(ausentes_ids),
         "dias_registrados": len(filas),
         "dias_calculables": len(completos),
         "dias_incompletos": len(incompletos),
@@ -260,27 +220,9 @@ def analizar(filas: list[dict], top: int = 10,
         "salida": f["salida"].strftime("%H:%M") if f.get("salida") else None,
         "n_marcas": f.get("n_marcas"),
         "estimado": bool(f.get("estimado")) or f.get("formato") == 1,
-        "sin_registro": False,
         "motivo": motivo_revisar(f),
     } for f in incompletos]
-    # Quienes no marcaron nada en el período también hay que revisarlos.
-    # Con una fecha concreta es "no marcó ese día"; con un mes, "no tiene
-    # ningún registro en todo el período".
-    fecha_dia = str(filas[0].get("fecha")) if (un_dia and filas) else None
-    for t in (padron or []):
-        if t["id"] not in ausentes_ids:
-            continue
-        revisar.append({
-            "trabajador_id": t["id"],
-            "codigo": t.get("codigo"), "nombre": t.get("nombre"),
-            "departamento": t.get("departamento"), "zona": t.get("zona"),
-            "fecha": fecha_dia, "dia": None,
-            "entrada": None, "salida": None, "n_marcas": 0,
-            "sin_registro": True,
-            "motivo": "No marcó" if un_dia else "Sin registros en el período",
-        })
-
-    revisar.sort(key=lambda x: (x["fecha"] or "", x["nombre"] or ""))
+    revisar.sort(key=lambda x: (x["fecha"], x["nombre"] or ""))
 
     # --- Por supervisor (columna Department del huellero) ---
     # Se agrupan las marcaciones, no los trabajadores, porque alguien
@@ -329,4 +271,249 @@ def analizar(filas: list[dict], top: int = 10,
         "dias_mas_horas": list(reversed(dias_ordenados[-top:])),
         "revisar": revisar[:200],
         "total_revisar": len(revisar),
+    }
+
+
+# ============================================================
+#  ANÁLISIS SOBRE TRABAJADORES ACTIVOS
+#
+#  Dos pantallas con propósitos distintos:
+#
+#    analizar_completos  -> solo quienes marcaron entrada Y salida.
+#                           Es donde se miden jornadas y horarios.
+#
+#    analizar_revisar    -> todo lo demás: solo entrada, solo salida
+#                           o ninguna marca. Es la lista de trabajo.
+#
+#  El porcentaje de marcación cruza las dos: cuántos de los que
+#  debían marcar lo hicieron bien.
+# ============================================================
+
+def _pct(parte, total) -> float:
+    return round(parte / total * 100, 1) if total else 0.0
+
+
+def analizar_completos(filas: list[dict], padron: list[dict],
+                       top: int = 10) -> dict:
+    """
+    Análisis de jornadas. Solo entran los días con entrada y salida.
+
+    `padron` son los trabajadores activos que debían marcar; sirve de
+    denominador del porcentaje. Sin él, un 100% no significaría nada.
+    """
+    completos = [f for f in filas if f.get("estado") == "completo"]
+
+    por_persona: dict = {}
+    for f in completos:
+        p = por_persona.setdefault(f["trabajador_id"], {
+            "trabajador_id": f["trabajador_id"],
+            "codigo": f.get("codigo"), "nombre": f.get("nombre"),
+            "supervisor": f.get("supervisor"), "marcaciones": [],
+        })
+        p["marcaciones"].append(f)
+
+    trabajadores = []
+    for p in por_persona.values():
+        r = resumen_trabajador(p["marcaciones"])
+        trabajadores.append({
+            "trabajador_id": p["trabajador_id"], "codigo": p["codigo"],
+            "nombre": p["nombre"], "supervisor": p["supervisor"], **r,
+        })
+    trabajadores.sort(key=lambda x: (x["nombre"] or "").lower())
+
+    duraciones = [f["minutos"] for f in completos if f.get("minutos") is not None]
+    entradas = [hora_a_minutos(f.get("entrada")) for f in completos]
+    salidas = [hora_a_minutos(f.get("salida")) for f in completos]
+
+    prom_dur = _promedio(duraciones)
+    dias = sorted({str(f["fecha"]) for f in filas})
+    n_padron = len(padron)
+    esperados = n_padron * len(dias)
+
+    total = {
+        "trabajadores_activos": n_padron,
+        "trabajadores_con_jornada": len(trabajadores),
+        "dias": len(dias),
+        "registros_completos": len(completos),
+        "esperados": esperados,
+        "pct_marcacion": _pct(len(completos), esperados),
+        "entrada": minutos_a_hora(_promedio(entradas)),
+        "salida": minutos_a_hora(_promedio(salidas)),
+        "duracion": minutos_a_duracion(prom_dur),
+        "horas_promedio": round(prom_dur / 60, 2) if prom_dur else 0,
+        "horas_total": round(sum(duraciones) / 60, 2) if duraciones else 0,
+    }
+
+    # --- Marcación día a día ---
+    por_dia: dict = {}
+    for f in completos:
+        clave = str(f["fecha"])
+        d = por_dia.setdefault(clave, {"fecha": clave, "dia": f.get("dia"),
+                                       "duraciones": [], "entradas": []})
+        if f.get("minutos") is not None:
+            d["duraciones"].append(f["minutos"])
+        e = hora_a_minutos(f.get("entrada"))
+        if e is not None:
+            d["entradas"].append(e)
+
+    serie = []
+    for fecha in dias:
+        d = por_dia.get(fecha)
+        marcaron = len(d["duraciones"]) if d else 0
+        pd = _promedio(d["duraciones"]) if d else None
+        serie.append({
+            "fecha": fecha,
+            "marcaron": marcaron,
+            "esperados": n_padron,
+            "pct": _pct(marcaron, n_padron),
+            "duracion": minutos_a_duracion(pd),
+            "horas_promedio": round(pd / 60, 2) if pd else 0,
+            "entrada": minutos_a_hora(_promedio(d["entradas"])) if d else None,
+        })
+
+    # --- Por supervisor ---
+    equipos: dict = {}
+    for t in padron:
+        clave = t.get("supervisor") or "Sin asignar"
+        g = equipos.setdefault(clave, {"supervisor": clave, "personas": set(),
+                                       "marcaciones": []})
+        g["personas"].add(t["trabajador_id"])
+    for f in completos:
+        clave = f.get("supervisor") or "Sin asignar"
+        g = equipos.setdefault(clave, {"supervisor": clave, "personas": set(),
+                                       "marcaciones": []})
+        g["marcaciones"].append(f)
+
+    supervisores = []
+    for g in equipos.values():
+        r = resumen_trabajador(g["marcaciones"])
+        esperados_g = len(g["personas"]) * len(dias)
+        supervisores.append({
+            "supervisor": g["supervisor"],
+            "trabajadores": len(g["personas"]),
+            "registros_completos": len(g["marcaciones"]),
+            "esperados": esperados_g,
+            "pct_marcacion": _pct(len(g["marcaciones"]), esperados_g),
+            "entrada": r["entrada"], "salida": r["salida"],
+            "duracion": r["duracion"], "duracion_min": r["duracion_min"],
+            "horas_promedio": r["horas_promedio"],
+            "horas_total": r["horas_total"],
+        })
+
+    con_datos = [s for s in supervisores if s["registros_completos"] > 0]
+    supervisores.sort(key=lambda x: -x["pct_marcacion"])
+
+    con_jornada = [t for t in trabajadores if t["dias_calculables"] > 0]
+
+    return {
+        "vacio": not completos and not padron,
+        "total": total,
+        "trabajadores": trabajadores,
+        "serie": serie,
+        "supervisores": supervisores,
+        "sup_mejor_marcacion": sorted(con_datos,
+            key=lambda x: -x["pct_marcacion"])[:top],
+        "sup_mayor_jornada": sorted(con_datos,
+            key=lambda x: -(x["duracion_min"] or 0))[:top],
+        "mayor_duracion": sorted(con_jornada,
+            key=lambda x: -(x["duracion_min"] or 0))[:top],
+        "menor_duracion": sorted(con_jornada,
+            key=lambda x: (x["duracion_min"] or 0))[:top],
+        "madrugadores": sorted(con_jornada,
+            key=lambda x: (x["entrada_min"] or 9999))[:top],
+    }
+
+
+def analizar_revisar(filas: list[dict], padron: list[dict],
+                     un_dia: bool = False, top: int = 10) -> dict:
+    """
+    Casos a revisar: marcaciones incompletas y ausencias.
+
+    Los días sin ninguna marca no existen en la base (las celdas vacías
+    no se guardan), así que las ausencias se deducen comparando el
+    padrón con quienes sí tienen registro.
+    """
+    incompletos = [f for f in filas if f.get("estado") == "incompleta"]
+    con_registro = {f["trabajador_id"] for f in filas}
+
+    revisar = []
+    for f in incompletos:
+        revisar.append({
+            "trabajador_id": f.get("trabajador_id"),
+            "codigo": f.get("codigo"), "nombre": f.get("nombre"),
+            "supervisor": f.get("supervisor"),
+            "fecha": str(f.get("fecha")), "dia": f.get("dia"),
+            "entrada": f["entrada"].strftime("%H:%M") if f.get("entrada") else None,
+            "salida": f["salida"].strftime("%H:%M") if f.get("salida") else None,
+            "n_marcas": f.get("n_marcas"),
+            "sin_registro": False,
+            "motivo": motivo_revisar(f),
+        })
+
+    fecha_dia = str(filas[0].get("fecha")) if (un_dia and filas) else None
+    ausentes = [t for t in padron if t["trabajador_id"] not in con_registro]
+    for t in ausentes:
+        revisar.append({
+            "trabajador_id": t["trabajador_id"],
+            "codigo": t.get("codigo"), "nombre": t.get("nombre"),
+            "supervisor": t.get("supervisor"),
+            "fecha": fecha_dia, "dia": None,
+            "entrada": None, "salida": None, "n_marcas": 0,
+            "sin_registro": True,
+            "motivo": "No marcó" if un_dia else "Sin registros en el período",
+        })
+
+    revisar.sort(key=lambda x: (x["fecha"] or "", x["nombre"] or ""))
+
+    # --- Por supervisor ---
+    equipos: dict = {}
+    for t in padron:
+        clave = t.get("supervisor") or "Sin asignar"
+        g = equipos.setdefault(clave, {"supervisor": clave, "personas": set(),
+                                       "casos": 0, "sin_marcar": 0})
+        g["personas"].add(t["trabajador_id"])
+    for x in revisar:
+        clave = x.get("supervisor") or "Sin asignar"
+        g = equipos.setdefault(clave, {"supervisor": clave, "personas": set(),
+                                       "casos": 0, "sin_marcar": 0})
+        g["casos"] += 1
+        if x["sin_registro"]:
+            g["sin_marcar"] += 1
+
+    supervisores = [{
+        "supervisor": g["supervisor"],
+        "trabajadores": len(g["personas"]),
+        "casos": g["casos"],
+        "sin_marcar": g["sin_marcar"],
+        "incompletos": g["casos"] - g["sin_marcar"],
+        "casos_por_trabajador": round(g["casos"] / len(g["personas"]), 2)
+                                if g["personas"] else 0,
+    } for g in equipos.values()]
+    supervisores.sort(key=lambda x: -x["casos"])
+
+    conteo: dict = {}
+    for x in revisar:
+        conteo[x["motivo"]] = conteo.get(x["motivo"], 0) + 1
+
+    completos = [f for f in filas if f.get("estado") == "completo"]
+    dias = sorted({str(f["fecha"]) for f in filas})
+    esperados = len(padron) * len(dias) if dias else len(padron)
+
+    return {
+        "vacio": not revisar,
+        "total": {
+            "casos": len(revisar),
+            "incompletos": len(incompletos),
+            "sin_marcar": len(ausentes),
+            "trabajadores_activos": len(padron),
+            "registros_completos": len(completos),
+            "esperados": esperados,
+            "pct_sin_marcacion": _pct(len(revisar), esperados),
+        },
+        "revisar": revisar[:500],
+        "total_revisar": len(revisar),
+        "por_motivo": [{"motivo": k, "casos": v}
+                       for k, v in sorted(conteo.items(), key=lambda x: -x[1])],
+        "supervisores": supervisores,
+        "sup_mas_casos": supervisores[:top],
     }

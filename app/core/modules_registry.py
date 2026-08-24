@@ -50,6 +50,7 @@ MODULOS = [
             {"id": "analisis", "nombre": "Análisis"},
             {"id": "revisar",  "nombre": "A revisar"},
             {"id": "datos",    "nombre": "Cargar datos"},
+            {"id": "personal", "nombre": "Trabajadores activos"},
         ],
     },
     # --- Futuros módulos (desactivados hasta que se construyan) ---

@@ -16,46 +16,46 @@ async function pedir(url, opciones = {}) {
 
 export const API = {
   empresas: () => pedir(`${BASE}/empresas`),
-
   zonas: (empresaId) =>
     pedir(`${BASE}/zonas${empresaId ? `?empresa_id=${empresaId}` : ''}`),
-
   periodos: (empresaId) =>
     pedir(`${BASE}/periodos${empresaId ? `?empresa_id=${empresaId}` : ''}`),
 
-  filtros: (empresaId, anio, mes) => {
+  // --- Filtros del análisis ---
+  _q: ({ empresaId, anio, mes, dia, trabajador, supervisor } = {}) => {
     const q = new URLSearchParams();
     if (empresaId) q.append('empresa_id', empresaId);
-    if (anio) q.append('anio', anio);
-    if (mes) q.append('mes', mes);
-    return pedir(`${BASE}/filtros?${q}`);
-  },
-
-  analisis: ({ empresaId, zonaId, anio, mes, dia, trabajador, departamento } = {}) => {
-    const q = new URLSearchParams();
-    if (empresaId) q.append('empresa_id', empresaId);
-    if (zonaId) q.append('zona_id', zonaId);
     if (anio) q.append('anio', anio);
     if (mes) q.append('mes', mes);
     if (dia) q.append('dia', dia);
     if (trabajador && trabajador.trim()) q.append('trabajador', trabajador.trim());
-    if (departamento) q.append('departamento', departamento);
-    return pedir(`${BASE}/analisis?${q}`);
+    if (supervisor) q.append('supervisor', supervisor);
+    return q;
   },
 
-  trabajador: (id, anio, mes) => {
-    const q = new URLSearchParams();
-    if (anio) q.append('anio', anio);
-    if (mes) q.append('mes', mes);
-    return pedir(`${BASE}/trabajadores/${id}?${q}`);
-  },
+  analisis: (f = {}) => pedir(`${BASE}/analisis?${API._q(f)}`),
+  revisar: (f = {}) => pedir(`${BASE}/revisar?${API._q(f)}`),
 
+  urlAnalisisExcel: (f = {}) => `${BASE}/analisis/excel?${API._q(f)}`,
+  urlRevisarExcel: (f = {}) => `${BASE}/revisar/excel?${API._q(f)}`,
+
+  // --- Trabajadores activos ---
+  nomina: () => pedir(`${BASE}/nomina`),
+  urlFormatoNomina: () => `${BASE}/nomina/formato`,
+  cargarNomina: (archivo) => {
+    const fd = new FormData();
+    fd.append('archivo', archivo);
+    return pedir(`${BASE}/nomina/carga`, { method: 'POST', body: fd });
+  },
+  sinCruzar: (empresaId) =>
+    pedir(`${BASE}/nomina/sin-cruzar?empresa_id=${empresaId}`),
+
+  // --- Carga de asistencia ---
   urlFormato: (empresaId, zonaId, anio, mes, formato = 1) => {
     const q = new URLSearchParams({ anio, mes, zona_id: zonaId, formato });
     if (empresaId) q.append('empresa_id', empresaId);
     return `${BASE}/formato?${q}`;
   },
-
   cargar: (anio, mes, empresaId, zonaId, formato, archivo, reemplazar = true) => {
     const fd = new FormData();
     fd.append('anio', anio);
