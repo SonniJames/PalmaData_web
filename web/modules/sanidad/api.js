@@ -22,7 +22,7 @@ const json = (cuerpo) => ({
 
 // Los filtros de fecha van juntos a todas las consultas de revisión
 const q = ({ fechaDesde, fechaHasta, actualizaDesde, actualizaHasta,
-             catLoteId, evaluador, incluirAnulados, soloErroneos } = {}) => {
+             catLoteId, evaluador, verAnulados, soloErroneos } = {}) => {
   const p = new URLSearchParams();
   if (fechaDesde) p.append('fecha_desde', fechaDesde);
   if (fechaHasta) p.append('fecha_hasta', fechaHasta);
@@ -30,7 +30,7 @@ const q = ({ fechaDesde, fechaHasta, actualizaDesde, actualizaHasta,
   if (actualizaHasta) p.append('actualiza_hasta', actualizaHasta);
   if (catLoteId) p.append('cat_lote_id', catLoteId);
   if (evaluador) p.append('evaluador', evaluador);
-  if (incluirAnulados) p.append('incluir_anulados', 'true');
+  if (verAnulados) p.append('ver_anulados', 'true');
   if (soloErroneos) p.append('solo_erroneos', 'true');
   return p;
 };
@@ -51,6 +51,7 @@ export const API = {
     return pedir(`${BASE}/distribucion?${p}`);
   },
   duplicados: (f = {}) => pedir(`${BASE}/duplicados?${q(f)}`),
+  urlDuplicadosExcel: (f = {}) => `${BASE}/duplicados/excel?${q(f)}`,
 
   // --- Correcciones ---
   corregirLote: (ids, catLoteId) =>

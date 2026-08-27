@@ -111,9 +111,9 @@ def get_revision(fecha_desde: date | None = Query(None),
                  actualiza_hasta: date | None = Query(None),
                  cat_lote_id: int | None = Query(None),
                  evaluador: int | None = Query(None),
-                 incluir_anulados: bool = Query(False),
+                 ver_anulados: bool = Query(False),
                  solo_erroneos: bool = Query(False),
-                 limite: int = Query(2000, ge=1, le=10000),
+                 limite: int = Query(1000, ge=1, le=10000),
                  _=Depends(sesion)):
     """
     Los registros del censo para revisar y corregir.
@@ -126,7 +126,7 @@ def get_revision(fecha_desde: date | None = Query(None),
                  actualiza_hasta, cat_lote_id, evaluador)
     _exigir_fecha(f)
 
-    filas = repo.listar_revision(f, incluir_anulados, solo_erroneos, limite)
+    filas = repo.listar_revision(f, ver_anulados, solo_erroneos, limite)
     return {"ok": True, "filtros": {k: _limpiar(v) for k, v in f.items()},
             "total": len(filas), "limite": limite,
             "truncado": len(filas) >= limite,
@@ -154,11 +154,29 @@ def get_distribucion(campo: str = Query(..., pattern="^(enfermedad|evento|trabaj
 @router.get("/duplicados")
 def get_duplicados(fecha_desde: date | None = Query(None),
                    fecha_hasta: date | None = Query(None),
+                   actualiza_desde: date | None = Query(None),
+                   actualiza_hasta: date | None = Query(None),
+                   cat_lote_id: int | None = Query(None),
+                   evaluador: int | None = Query(None),
+                   limite: int = Query(1000, ge=1, le=10000),
                    _=Depends(sesion)):
-    """Mismo día, misma línea, misma palma: casi siempre un error."""
-    f = _filtros(fecha_desde, fecha_hasta)
+    """
+    Mismo día, misma línea, misma palma: casi siempre un error.
+
+    Ser duplicado depende de OTRAS filas, por eso es una vista y no una
+    columna: si de tres repetidos se anulan dos, el que queda deja de
+    serlo solo. Una columna seguiría diciendo «duplicado».
+    """
+    f = _filtros(fecha_desde, fecha_hasta, actualiza_desde,
+                 actualiza_hasta, cat_lote_id, evaluador)
     _exigir_fecha(f)
-    return {"ok": True, "duplicados": [_fila(x) for x in repo.duplicados(f)]}
+    filas = repo.duplicados(f, limite)
+
+    # Cuántos grupos distintos hay: tres filas repetidas son un caso, no tres
+    grupos = len({(str(x["fecha"]), x["linea"], x["palma"]) for x in filas})
+
+    return {"ok": True, "total": len(filas), "grupos": grupos,
+            "duplicados": [_fila(x) for x in filas]}
 
 
 # ============================================================
@@ -343,6 +361,44 @@ def get_consolidado_excel(fecha_desde: date | None = Query(None),
                              f'attachment; filename="{archivo}"'})
 
 
+@router.get("/duplicados/excel")
+def get_duplicados_excel(fecha_desde: date | None = Query(None),
+                         fecha_hasta: date | None = Query(None),
+                         actualiza_desde: date | None = Query(None),
+                         actualiza_hasta: date | None = Query(None),
+                         cat_lote_id: int | None = Query(None),
+                         evaluador: int | None = Query(None),
+                         _=Depends(sesion)):
+    """Los duplicados del período, para revisarlos fuera de la pantalla."""
+    f = _filtros(fecha_desde, fecha_hasta, actualiza_desde,
+                 actualiza_hasta, cat_lote_id, evaluador)
+    _exigir_fecha(f)
+
+    filas = repo.duplicados(f, 10000)
+    columnas = [("fecha", "Fecha"), ("hora", "Hora"), ("lote", "Lote"),
+                ("linea", "Linea"), ("palma", "Palma"),
+                ("repeticiones", "Veces"),
+                ("enfermedad", "Enfermedad"), ("evento", "Evento"),
+                ("trabajador", "Trabajador"),
+                ("observaciones", "Observaciones"),
+                ("id_unico", "ID_unico")]
+
+    nota = ("Registros duplicados del censo\n"
+            "Misma palma, misma línea, mismo día.\n"
+            f"Fecha del censo: {fecha_desde or '—'} a {fecha_hasta or '—'}\n"
+            f"Fecha de actualización: {actualiza_desde or '—'} "
+            f"a {actualiza_hasta or '—'}\n"
+            f"Registros: {len(filas)}")
+
+    contenido = _excel("duplicados", columnas, filas, nota)
+    archivo = _nombre("censo_duplicados",
+                      fecha_desde or actualiza_desde,
+                      fecha_hasta or actualiza_hasta)
+    return Response(content=contenido, media_type=XLSX,
+                    headers={"Content-Disposition":
+                             f'attachment; filename="{archivo}"'})
+
+
 @router.get("/revision/excel")
 def get_revision_excel(fecha_desde: date | None = Query(None),
                        fecha_hasta: date | None = Query(None),
@@ -350,7 +406,7 @@ def get_revision_excel(fecha_desde: date | None = Query(None),
                        actualiza_hasta: date | None = Query(None),
                        cat_lote_id: int | None = Query(None),
                        evaluador: int | None = Query(None),
-                       incluir_anulados: bool = Query(False),
+                       ver_anulados: bool = Query(False),
                        solo_erroneos: bool = Query(False),
                        _=Depends(sesion)):
     """La tabla de revisión tal como se ve en pantalla."""
@@ -358,7 +414,7 @@ def get_revision_excel(fecha_desde: date | None = Query(None),
                  actualiza_hasta, cat_lote_id, evaluador)
     _exigir_fecha(f)
 
-    filas = repo.listar_revision(f, incluir_anulados, solo_erroneos, 10000)
+    filas = repo.listar_revision(f, ver_anulados, solo_erroneos, 10000)
     columnas = [("fecha", "Fecha"), ("hora", "Hora"), ("lote", "Lote"),
                 ("linea", "Linea"), ("palma", "Palma"),
                 ("enfermedad", "Enfermedad"), ("evento", "Evento"),

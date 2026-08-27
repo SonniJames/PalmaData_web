@@ -14,7 +14,7 @@ const S = {
   fechaDesde: '', fechaHasta: '',
   actualizaDesde: '', actualizaHasta: '',
   catLoteId: '', evaluador: '',
-  incluirAnulados: false, soloErroneos: false,
+  verAnulados: false, soloErroneos: false, soloDuplicados: false,
   seleccion: new Set(),
   catalogos: null, datos: null,
   tab: 'revision',
@@ -22,6 +22,8 @@ const S = {
 
 const $ = (s, c = document) => c.querySelector(s);
 const n0 = v => (v == null || isNaN(v)) ? '—' : Math.round(v).toLocaleString('es-CO');
+const n2 = (v, d = 1) => (v == null || isNaN(v)) ? '—'
+  : Number(v).toLocaleString('es-CO', { minimumFractionDigits: d, maximumFractionDigits: d });
 const esc = t => String(t ?? '').replace(/[&<>"]/g,
   c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const hoy = () => new Date().toISOString().slice(0, 10);
@@ -34,11 +36,18 @@ const filtros = () => ({
   fechaDesde: S.fechaDesde, fechaHasta: S.fechaHasta,
   actualizaDesde: S.actualizaDesde, actualizaHasta: S.actualizaHasta,
   catLoteId: S.catLoteId, evaluador: S.evaluador,
-  incluirAnulados: S.incluirAnulados, soloErroneos: S.soloErroneos,
+  verAnulados: S.verAnulados, soloErroneos: S.soloErroneos,
 });
 
 const hayFecha = () => !!(S.fechaDesde || S.fechaHasta
   || S.actualizaDesde || S.actualizaHasta);
+
+function nombreEvaluador() {
+  if (!S.evaluador || !S.catalogos) return '';
+  const x = (S.catalogos.evaluadores || [])
+    .find(e => String(e.evaluador_codigo) === String(S.evaluador));
+  return x ? (x.nombre || `Sin nombre (${x.evaluador_codigo})`) : '';
+}
 
 // ============================================================
 export async function montar(cont, sub = 'revision') {
@@ -77,12 +86,13 @@ function esqueleto(cont) {
                       border-radius:var(--radius-sm);font-size:14px">
         <datalist id="sLoList"></datalist></div>
       <div class="g"><label for="sEv">Trabajador</label>
-        <select id="sEv" style="min-width:170px">
-          <option value="">Todos</option>
-          ${ev.map(x => `<option value="${x.evaluador_codigo}" ${
-            String(x.evaluador_codigo) === String(S.evaluador) ? 'selected' : ''
-          }>${esc(x.nombre || 'Sin nombre')} (${n0(x.lecturas)})</option>`).join('')}
-        </select></div>
+        <input id="sEv" list="sEvList" placeholder="Buscar…" autocomplete="off"
+               value="${esc(nombreEvaluador())}"
+               style="min-width:180px;padding:8px 11px;border:1.5px solid var(--line);
+                      border-radius:var(--radius-sm);font-size:14px">
+        <datalist id="sEvList">${ev.map(x =>
+          `<option value="${esc(x.nombre || `Sin nombre (${x.evaluador_codigo})`)}">${n0(x.lecturas)} lecturas</option>`).join('')}</datalist>
+        <button class="btn btn-ghost" id="sEvX" style="padding:8px 11px" title="Limpiar">✕</button></div>
       <div class="sp"></div>
       <button class="btn btn-ghost" id="sLimpiar">Limpiar</button>
       <button class="btn btn-ghost" id="sR">Actualizar</button>
@@ -101,7 +111,24 @@ function esqueleto(cont) {
   };
   ['#sFd', '#sFh', '#sAd', '#sAh'].forEach(s => { $(s).onchange = rec; });
 
-  $('#sEv').onchange = e => { S.evaluador = e.target.value; cargar(); };
+  // El trabajador se busca escribiendo: son muchos y con un desplegable
+  // largo hay que recorrerlo entero para encontrar a alguien.
+  let tempEv = null;
+  const buscarEv = () => {
+    const texto = $('#sEv').value.trim().toLowerCase();
+    if (!texto) { S.evaluador = ''; cargar(); return; }
+    const lista = S.catalogos.evaluadores || [];
+    const exacto = lista.find(x => (x.nombre || '').toLowerCase() === texto);
+    const parcial = lista.filter(x => (x.nombre || '').toLowerCase().includes(texto));
+    const elegido = exacto || (parcial.length === 1 ? parcial[0] : null);
+    if (elegido) {
+      S.evaluador = elegido.evaluador_codigo;
+      cargar();
+    }
+  };
+  $('#sEv').oninput = () => { clearTimeout(tempEv); tempEv = setTimeout(buscarEv, 400); };
+  $('#sEv').onchange = () => { clearTimeout(tempEv); buscarEv(); };
+  $('#sEvX').onclick = () => { $('#sEv').value = ''; S.evaluador = ''; cargar(); };
   $('#sR').onclick = cargar;
   $('#sLimpiar').onclick = () => {
     S.fechaDesde = S.fechaHasta = S.actualizaDesde = S.actualizaHasta = '';
@@ -153,7 +180,19 @@ async function cargar() {
 
   c.innerHTML = `<div class="cargando">Cargando registros…</div>`;
   try {
-    S.datos = await API.revision(filtros());
+    if (S.soloDuplicados) {
+      // La vista de duplicados no trae resumen: se arma uno mínimo para
+      // que las tarjetas no queden con undefined.
+      const r = await API.duplicados(filtros());
+      S.datos = {
+        registros: r.duplicados, total: r.total, grupos: r.grupos,
+        limite: 1000, truncado: r.total >= 1000,
+        resumen: { registros: r.total, lotes: null, evaluadores: null,
+                   enfermedades: null, erroneos: null, anulados: null },
+      };
+    } else {
+      S.datos = await API.revision(filtros());
+    }
   } catch (e) {
     c.innerHTML = `<div class="msg msg-err">${esc(e.message)}</div>`;
     return;
@@ -175,14 +214,37 @@ function periodoTexto() {
 function vistaRevision(c) {
   const d = S.datos, r = d.resumen || {};
 
-  if (!d.registros.length) {
-    c.innerHTML = `<div class="vacio"><h3>Sin registros</h3>
-      <p>${esc(periodoTexto())}. Prueba con otro rango de fechas.</p></div>`;
-    return;
-  }
+  // Cuando no hay registros NO se vacía la pantalla: las casillas tienen
+  // que seguir ahí para poder desmarcarlas. Si desaparecieran junto con
+  // la tabla, quedarías con un filtro activo y sin forma de quitarlo.
+  const vacio = !d.registros.length;
+  const motivoVacio = S.soloDuplicados
+    ? `<h3>Ningún duplicado</h3>
+       <p>No hay dos lecturas de la misma palma el mismo día en este período.
+          Desmarca <strong>Solo duplicados</strong> para ver todos los registros.</p>`
+    : S.verAnulados
+    ? `<h3>Ningún registro anulado</h3>
+       <p>En este período no se ha anulado nada. Desmarca
+          <strong>Solo anulados</strong> aquí arriba para ver los normales.</p>`
+    : S.soloErroneos
+      ? `<h3>Ninguna palma inexistente</h3>
+         <p>Todas las lecturas de este período apuntan a palmas del catálogo.
+            Desmarca <strong>Solo palmas inexistentes</strong> para ver el resto.</p>`
+      : `<h3>Sin registros</h3>
+         <p>${esc(periodoTexto())}. Prueba con otro rango de fechas.</p>`;
 
   c.innerHTML = `
-    <div class="kpis">
+    ${vacio ? '' : (S.soloDuplicados ? `<div class="kpis">
+      <div class="kpi acc"><div class="l">Registros repetidos</div>
+        <div class="v" style="color:var(--danger)">${n0(d.total)}</div>
+        <div class="s">${esc(periodoTexto())}</div></div>
+      <div class="kpi"><div class="l">Casos</div>
+        <div class="v">${n0(d.grupos)}</div>
+        <div class="s">combinaciones día · línea · palma</div></div>
+      <div class="kpi"><div class="l">Por caso</div>
+        <div class="v">${d.grupos ? n2(d.total / d.grupos, 1) : '—'}</div>
+        <div class="s">repeticiones promedio</div></div>
+    </div>` : `<div class="kpis">
       <div class="kpi"><div class="l">Registros</div>
         <div class="v">${n0(r.registros)}</div>
         <div class="s">${esc(periodoTexto())}</div></div>
@@ -193,7 +255,17 @@ function vistaRevision(c) {
         <div class="v" style="color:var(--danger)">${n0(r.erroneos)}</div></div>` : ''}
       ${r.anulados ? `<div class="kpi"><div class="l">Anulados</div>
         <div class="v">${n0(r.anulados)}</div></div>` : ''}
-    </div>
+    </div>`)}
+
+    ${S.verAnulados ? `<div class="msg msg-warn">Estás viendo <strong>solo los
+      registros anulados</strong>. Puedes reactivarlos si alguno se descartó
+      por error.</div>` : ''}
+
+    ${S.soloDuplicados && !vacio ? `<div class="msg msg-warn">Dos o más lecturas
+      de la <strong>misma palma el mismo día</strong>. Suele ser un doble
+      registro: revisa cuál conservar y anula el resto.
+      <br>Ser duplicado depende de las otras filas, así que al anular una el
+      resto puede dejar de aparecer aquí.</div>` : ''}
 
     ${d.truncado ? `<div class="msg msg-warn">Se muestran los primeros
       ${n0(d.limite)} registros. Acota el rango de fechas para verlos todos.</div>` : ''}
@@ -210,11 +282,16 @@ function vistaRevision(c) {
         <div style="display:flex;gap:9px;flex-wrap:wrap;align-items:center">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
             <input type="checkbox" id="sErr" ${S.soloErroneos ? 'checked' : ''}>
-            Solo con palma inexistente</label>
+            Solo palmas inexistentes</label>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
-            <input type="checkbox" id="sAnu" ${S.incluirAnulados ? 'checked' : ''}>
-            Ver anulados</label>
-          <a class="btn btn-ghost" href="${API.urlRevisionExcel(filtros())}" download>Excel</a>
+            <input type="checkbox" id="sDup" ${S.soloDuplicados ? 'checked' : ''}>
+            Solo duplicados</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="sAnu" ${S.verAnulados ? 'checked' : ''}>
+            Solo anulados</label>
+          <a class="btn btn-ghost" href="${S.soloDuplicados
+            ? API.urlDuplicadosExcel(filtros()) : API.urlRevisionExcel(filtros())}"
+            download>Excel</a>
         </div>
       </div>
 
@@ -227,6 +304,7 @@ function vistaRevision(c) {
         <button class="btn btn-ghost" id="sQuitar">Quitar selección</button>
       </div>
 
+      ${vacio ? `<div class="vacio" style="padding:36px 20px">${motivoVacio}</div>` : `
       <div class="twrap">
         <table class="ft">
           <thead><tr>
@@ -234,7 +312,8 @@ function vistaRevision(c) {
             <th>Fecha</th><th class="num">Hora</th><th>Lote</th>
             <th class="num">Línea</th><th class="num">Palma</th>
             <th>Enfermedad</th><th>Evento</th><th>Trabajador</th>
-            <th>Observaciones</th><th>Corregido</th>
+            <th>Observaciones</th>
+            ${S.soloDuplicados ? '<th class="num">Veces</th>' : '<th>Corregido</th>'}
             <th class="num">ID único</th>
           </tr></thead>
           <tbody>${d.registros.map(x => `<tr data-id="${x.san_enf_lectura_id}"
@@ -251,25 +330,45 @@ function vistaRevision(c) {
             <td>${esc(x.evento ?? '—')}</td>
             <td>${esc(x.trabajador ?? '—')}</td>
             <td style="max-width:220px">${esc(x.observaciones ?? '')}</td>
-            <td style="font-size:12.5px">${x.corregido_por
-              ? `<span class="sem sem-optimo" title="${esc(String(x.corregido_at ?? ''))}">${esc(x.corregido_por)}</span>`
-              : (x.anulado_por
-                  ? `<span class="sem sem-deficiente" title="${esc(x.anulado_motivo ?? '')}">anuló ${esc(x.anulado_por)}</span>`
-                  : '—')}</td>
+            ${S.soloDuplicados
+              ? `<td class="num"><span class="sem sem-bajo">${x.repeticiones}</span></td>`
+              : `<td style="font-size:12.5px">${x.corregido_por
+                  ? `<span class="sem sem-optimo" title="${esc(String(x.corregido_at ?? ''))}">${esc(x.corregido_por)}</span>`
+                  : (x.anulado_por
+                      ? `<span class="sem sem-deficiente" title="${esc(x.anulado_motivo ?? '')}">anuló ${esc(x.anulado_por)}</span>`
+                      : '—')}</td>`}
             <td class="num" style="font-size:12px">${esc(x.id_unico ?? '')}</td>
           </tr>`).join('')}</tbody>
         </table>
-      </div>
+      </div>`}
     </div>
 
     <div id="sModal"></div>`;
 
-  $('#sErr').onchange = e => { S.soloErroneos = e.target.checked; S.seleccion.clear(); cargar(); };
-  $('#sAnu').onchange = e => { S.incluirAnulados = e.target.checked; S.seleccion.clear(); cargar(); };
+  $('#sErr').onchange = e => {
+    S.soloErroneos = e.target.checked;
+    S.seleccion.clear();          // los ids anteriores ya no están en la tabla
+    cargar();
+  };
+  $('#sAnu').onchange = e => {
+    S.verAnulados = e.target.checked;
+    if (e.target.checked) S.soloDuplicados = false;   // son excluyentes
+    S.seleccion.clear();
+    cargar();
+  };
+  $('#sDup').onchange = e => {
+    S.soloDuplicados = e.target.checked;
+    if (e.target.checked) S.verAnulados = false;
+    S.seleccion.clear();
+    cargar();
+  };
 
+  // Con la tabla vacía estos elementos no existen, pero las casillas
+  // de arriba sí: por eso cada acceso se protege en vez de salir antes.
   const refrescar = () => {
-    const n = S.seleccion.size;
     const barra = $('#sAcciones');
+    if (!barra) return;
+    const n = S.seleccion.size;
     barra.style.display = n ? 'flex' : 'none';
     $('#sSelN').textContent = n === 1
       ? '1 registro seleccionado'
@@ -285,7 +384,8 @@ function vistaRevision(c) {
     };
   });
 
-  $('#sTodos').onchange = e => {
+  const todos = $('#sTodos');
+  if (todos) todos.onchange = e => {
     c.querySelectorAll('.sSel').forEach(chk => {
       chk.checked = e.target.checked;
       const id = Number(chk.value);
@@ -294,16 +394,20 @@ function vistaRevision(c) {
     refrescar();
   };
 
-  $('#sQuitar').onclick = () => {
+  const quitar = $('#sQuitar');
+  if (quitar) quitar.onclick = () => {
     S.seleccion.clear();
     c.querySelectorAll('.sSel').forEach(chk => { chk.checked = false; });
-    $('#sTodos').checked = false;
+    if (todos) todos.checked = false;
     refrescar();
   };
 
-  $('#sEditar').onclick = () => abrirModal([...S.seleccion]);
-  $('#sAnular').onclick = () => accion('anular');
-  $('#sReactivar').onclick = () => accion('reactivar');
+  const editar = $('#sEditar');
+  if (editar) editar.onclick = () => abrirModal([...S.seleccion]);
+  const anular = $('#sAnular');
+  if (anular) anular.onclick = () => accion('anular');
+  const react = $('#sReactivar');
+  if (react) react.onclick = () => accion('reactivar');
 
   refrescar();
 }

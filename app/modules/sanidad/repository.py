@@ -90,11 +90,15 @@ def _params(f: dict) -> list:
     return salida
 
 
-def listar_revision(filtros: dict, incluir_anulados: bool = False,
+def listar_revision(filtros: dict, ver_anulados: bool = False,
                     solo_erroneos: bool = False,
-                    limite: int = 2000) -> list[dict]:
+                    limite: int = 1000) -> list[dict]:
     """
     Registros de la pantalla de revisión.
+
+    `ver_anulados` muestra SOLO los anulados, no los suma a la lista
+    normal: son dos vistas del trabajo, no una acumulación. Si no hay
+    ninguno anulado, la tabla sale vacía, que es la respuesta correcta.
 
     Sin filtro de fecha la vista recorrería toda la tabla, así que el
     router exige al menos uno.
@@ -112,8 +116,7 @@ def listar_revision(filtros: dict, incluir_anulados: bool = False,
     """ + _FILTROS
     params = _params(filtros)
 
-    if not incluir_anulados:
-        sql += " AND NOT v.anulado"
+    sql += " AND v.anulado" if ver_anulados else " AND NOT v.anulado"
     if solo_erroneos:
         sql += " AND v.erroneo"
 
@@ -142,16 +145,37 @@ def distribucion(campo: str, filtros: dict, limite: int = 20) -> list[dict]:
           filtros.get("cat_lote_id"), filtros.get("evaluador"), limite))
 
 
-def duplicados(filtros: dict) -> list[dict]:
-    """Mismo día, misma línea, misma palma."""
-    return db.fetch_all("""
-        SELECT * FROM plantacion.v_censo_duplicados d
-        WHERE (%s::date IS NULL OR d.fecha >= %s::date)
-          AND (%s::date IS NULL OR d.fecha <= %s::date)
-        ORDER BY d.fecha DESC, d.linea, d.palma
-        LIMIT 500
-    """, (filtros.get("fecha_desde"), filtros.get("fecha_desde"),
-          filtros.get("fecha_hasta"), filtros.get("fecha_hasta")))
+def duplicados(filtros: dict, limite: int = 1000) -> list[dict]:
+    """
+    Mismo día, misma línea, misma palma: casi siempre un error.
+
+    El filtro va DENTRO del subquery, no sobre la vista. Si se aplicara
+    encima, la ventana ya habría contado las repeticiones sobre toda la
+    tabla y saldrían registros que en el período filtrado son únicos.
+    """
+    sql = """
+        SELECT * FROM (
+            SELECT v.san_enf_lectura_id, v.id_unico, v.fecha, v.hora,
+                   v.lote, v.linea, v.palma, v.enfermedad, v.evento,
+                   v.trabajador, v.observaciones,
+                   v.erroneo, v.anulado, v.fecha_actualizacion,
+                   v.corregido_por, v.corregido_at,
+                   v.anulado_por, v.anulado_motivo,
+                   v.cat_lote_id, v.san_enfermedades_id, v.san_evento_enf_id,
+                   v.evaluador_codigo, v.cat_palma_id,
+                   COUNT(*) OVER (PARTITION BY v.fecha, v.linea, v.palma)
+                       AS repeticiones
+            FROM plantacion.v_censo_revision v
+    """ + _FILTROS + """
+              AND NOT v.anulado
+        ) d
+        WHERE d.repeticiones > 1
+        ORDER BY d.fecha DESC, d.linea, d.palma, d.hora
+        LIMIT %s
+    """
+    params = _params(filtros)
+    params.append(limite)
+    return db.fetch_all(sql, tuple(params))
 
 
 # ============================================================
