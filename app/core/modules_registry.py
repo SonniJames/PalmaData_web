@@ -65,8 +65,11 @@ MODULOS = [
         "id": "sanidad",
         "nombre": "Sanidad",
         "icono": "shield",
-        "activo": False,
-        "submodulos": [],
+        "activo": True,
+        "submodulos": [
+            {"id": "revision",  "nombre": "Censo · revisión"},
+            {"id": "descargas", "nombre": "Censo · descargas"},
+        ],
     },
 ]
 

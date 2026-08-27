@@ -43,6 +43,7 @@ app.include_router(auth_router)
 MODULOS_BACKEND = [
     "fertilizacion",
     "asistencia",
+    "sanidad",
 ]
 
 ESTADO_MODULOS: dict[str, dict] = {}
