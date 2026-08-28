@@ -351,7 +351,7 @@ def marcaciones_vista(empresa_id: int, anio=None, mes=None, dia=None,
     filtro, params = _armar_filtros(empresa_id, anio, mes, dia,
                                     trabajador, supervisor)
     sql = """
-        SELECT DISTINCT ON (v.trabajador_id, v.fecha)
+        SELECT DISTINCT ON (COALESCE(v.cod_norm, v.trabajador_id::text), v.fecha)
                v.marcacion_id, v.codigo, v.nombre, v.supervisor,
                v.trabajador_id, v.cod_huellero, v.cod_norm,
                v.fecha, v.dia, v.anio, v.mes,
@@ -362,7 +362,7 @@ def marcaciones_vista(empresa_id: int, anio=None, mes=None, dia=None,
     if solo_completos:
         sql += " AND v.estado_marcacion = 'completo'"
     sql += """
-        ORDER BY v.trabajador_id, v.fecha,
+        ORDER BY COALESCE(v.cod_norm, v.trabajador_id::text), v.fecha,
                  (v.estado_marcacion = 'completo') DESC,
                  v.minutos DESC NULLS LAST, v.marcacion_id
     """
@@ -383,8 +383,14 @@ def padron_activo(empresa_id: int, anio=None, mes=None,
     del huellero igual debía marcar, y su ausencia es justamente lo que
     hay que ver.
     """
+    # DISTINCT ON: una persona de la nómina puede tener VARIAS filas en
+    # asis_trabajador si quedó registrada en más de un huellero. Sin esto
+    # el LEFT JOIN la devuelve repetida, y como cada fila tiene un
+    # trabajador_id distinto, una cruza con la marcación y la otra sale
+    # como «no marcó». Ese era el duplicado que se veía en la tabla.
     sql = """
-        SELECT a.id AS activo_id, a.codigo, a.nombre, a.supervisor,
+        SELECT DISTINCT ON (a.cod_norm)
+               a.id AS activo_id, a.codigo, a.nombre, a.supervisor,
                a.cod_norm, a.employee_id,
                t.id AS trabajador_id
         FROM plantacion.asis_trabajador_activo a
@@ -400,9 +406,12 @@ def padron_activo(empresa_id: int, anio=None, mes=None,
         else:
             sql += " AND a.supervisor = %s"
             params.append(str(supervisor).strip())
-    sql += " ORDER BY a.nombre"
+    # El ORDER BY debe empezar por la clave del DISTINCT ON.
+    # t.id NULLS LAST prefiere la fila que sí existe en el huellero.
+    sql += " ORDER BY a.cod_norm, t.id NULLS LAST"
 
     filas = db.fetch_all(sql, tuple(params))
+    filas.sort(key=lambda f: (f.get("nombre") or "").lower())
     # Los que nunca aparecieron en un huellero no tienen trabajador_id.
     # Se les da uno negativo y estable para poder contarlos aparte.
     for i, f in enumerate(filas, 1):
