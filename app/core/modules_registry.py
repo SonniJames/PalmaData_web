@@ -67,8 +67,10 @@ MODULOS = [
         "icono": "shield",
         "activo": True,
         "submodulos": [
-            {"id": "revision",  "nombre": "Censo · revisión"},
-            {"id": "descargas", "nombre": "Censo · descargas"},
+            {"id": "revision",        "nombre": "Censo · revisión"},
+            {"id": "descargas",       "nombre": "Censo · descargas"},
+            {"id": "trat-revision",   "nombre": "Tratamientos · revisión"},
+            {"id": "trat-descargas",  "nombre": "Tratamientos · descargas"},
         ],
     },
 ]

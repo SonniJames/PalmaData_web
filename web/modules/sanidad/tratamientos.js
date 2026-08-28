@@ -1,20 +1,21 @@
 // ============================================================
-// PalmaData · Sanidad · Censo de enfermedades
+// PalmaData · Sanidad · Tratamientos
 //
-// Dos pantallas:
-//   Revisión   -> corregir los registros del día
+// Dos pantallas, réplica del censo sobre san_enf_tratamiento:
+//   Revisión   -> corregir los tratamientos del día
 //   Descargas  -> bajar el consolidado ya corregido
 //
-// Las correcciones no se hacen aquí: se llaman las funciones de la
-// base, que validan y dejan constancia de quién cambió qué.
+// Diferencias con el censo: no existe la validación de "palma
+// inexistente" (erroneo), la tabla trae tratamiento + cantidad,
+// y la descarga filtra también por fecha de actualización.
 // ============================================================
-import { API } from './api.js';
+import { API } from './api_trat.js';
 
 const S = {
   fechaDesde: '', fechaHasta: '',
   actualizaDesde: '', actualizaHasta: '',
   catLoteId: '', evaluador: '',
-  verAnulados: false, soloErroneos: false, soloDuplicados: false,
+  verAnulados: false, soloDuplicados: false,
   seleccion: new Set(),
   catalogos: null, datos: null,
   tab: 'revision',
@@ -28,15 +29,16 @@ const esc = t => String(t ?? '').replace(/[&<>"]/g,
   c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const hoy = () => new Date().toISOString().slice(0, 10);
 const hora = h => h ? String(h).slice(0, 5) : '—';
-
-const COLORES = ['#16412b', '#2f7d4f', '#e6a817', '#e0651a', '#5c8d6f',
-  '#b8890f', '#8ab19a', '#c9560f'];
+// La cantidad puede traer decimales (dosis) o ser entera (unidades):
+// se muestran decimales solo cuando existen.
+const cant = v => (v == null || isNaN(v)) ? '—'
+  : (Number(v) % 1 === 0 ? n0(v) : n2(v, 1));
 
 const filtros = () => ({
   fechaDesde: S.fechaDesde, fechaHasta: S.fechaHasta,
   actualizaDesde: S.actualizaDesde, actualizaHasta: S.actualizaHasta,
   catLoteId: S.catLoteId, evaluador: S.evaluador,
-  verAnulados: S.verAnulados, soloErroneos: S.soloErroneos,
+  verAnulados: S.verAnulados,
 });
 
 const hayFecha = () => !!(S.fechaDesde || S.fechaHasta
@@ -51,12 +53,6 @@ function nombreEvaluador() {
 
 // ============================================================
 export async function montar(cont, sub = 'revision') {
-  // Los apartados de tratamientos viven en su propio archivo, que replica
-  // esta misma pantalla sobre san_enf_tratamiento.
-  if (String(sub || '').startsWith('trat')) {
-    const m = await import('./tratamientos.js');
-    return m.montar(cont, sub === 'trat-descargas' ? 'descargas' : 'revision');
-  }
   S.tab = sub || 'revision';
   cont.innerHTML = `<div class="cargando">Cargando…</div>`;
   try {
@@ -78,50 +74,50 @@ function esqueleto(cont) {
   const ev = S.catalogos.evaluadores || [];
   cont.innerHTML = `
     <div class="fbar">
-      <div class="g"><label for="sFd">Fecha censo · desde</label>
-        <input type="date" id="sFd" value="${S.fechaDesde}"></div>
-      <div class="g"><label for="sFh">hasta</label>
-        <input type="date" id="sFh" value="${S.fechaHasta}"></div>
-      <div class="g"><label for="sAd">Actualización · desde</label>
-        <input type="date" id="sAd" value="${S.actualizaDesde}"></div>
-      <div class="g"><label for="sAh">hasta</label>
-        <input type="date" id="sAh" value="${S.actualizaHasta}"></div>
-      <div class="g"><label for="sLo">Lote</label>
-        <input id="sLo" list="sLoList" placeholder="Buscar…" autocomplete="off"
+      <div class="g"><label for="tFd">Fecha tratamiento · desde</label>
+        <input type="date" id="tFd" value="${S.fechaDesde}"></div>
+      <div class="g"><label for="tFh">hasta</label>
+        <input type="date" id="tFh" value="${S.fechaHasta}"></div>
+      <div class="g"><label for="tAd">Actualización · desde</label>
+        <input type="date" id="tAd" value="${S.actualizaDesde}"></div>
+      <div class="g"><label for="tAh">hasta</label>
+        <input type="date" id="tAh" value="${S.actualizaHasta}"></div>
+      <div class="g"><label for="tLo">Lote</label>
+        <input id="tLo" list="tLoList" placeholder="Buscar…" autocomplete="off"
                style="min-width:150px;padding:8px 11px;border:1.5px solid var(--line);
                       border-radius:var(--radius-sm);font-size:14px">
-        <datalist id="sLoList"></datalist></div>
-      <div class="g"><label for="sEv">Trabajador</label>
-        <input id="sEv" list="sEvList" placeholder="Buscar…" autocomplete="off"
+        <datalist id="tLoList"></datalist></div>
+      <div class="g"><label for="tEv">Trabajador</label>
+        <input id="tEv" list="tEvList" placeholder="Buscar…" autocomplete="off"
                value="${esc(nombreEvaluador())}"
                style="min-width:180px;padding:8px 11px;border:1.5px solid var(--line);
                       border-radius:var(--radius-sm);font-size:14px">
-        <datalist id="sEvList">${ev.map(x =>
-          `<option value="${esc(x.nombre || `Sin nombre (${x.evaluador_codigo})`)}">${n0(x.lecturas)} lecturas</option>`).join('')}</datalist>
-        <button class="btn btn-ghost" id="sEvX" style="padding:8px 11px" title="Limpiar">✕</button></div>
+        <datalist id="tEvList">${ev.map(x =>
+          `<option value="${esc(x.nombre || `Sin nombre (${x.evaluador_codigo})`)}">${n0(x.lecturas)} registros</option>`).join('')}</datalist>
+        <button class="btn btn-ghost" id="tEvX" style="padding:8px 11px" title="Limpiar">✕</button></div>
       <div class="sp"></div>
-      <button class="btn btn-ghost" id="sLimpiar">Limpiar</button>
-      <button class="btn btn-ghost" id="sR">Actualizar</button>
+      <button class="btn btn-ghost" id="tLimpiar">Limpiar</button>
+      <button class="btn btn-ghost" id="tR">Actualizar</button>
     </div>
     <div class="ftabs">
       <button class="ftab" data-tab="revision">Revisión</button>
       <button class="ftab" data-tab="descargas">Descargas</button>
     </div>
-    <div id="sC"></div>`;
+    <div id="tC"></div>`;
 
   const rec = () => {
-    S.fechaDesde = $('#sFd').value; S.fechaHasta = $('#sFh').value;
-    S.actualizaDesde = $('#sAd').value; S.actualizaHasta = $('#sAh').value;
+    S.fechaDesde = $('#tFd').value; S.fechaHasta = $('#tFh').value;
+    S.actualizaDesde = $('#tAd').value; S.actualizaHasta = $('#tAh').value;
     S.seleccion.clear();
     cargar();
   };
-  ['#sFd', '#sFh', '#sAd', '#sAh'].forEach(s => { $(s).onchange = rec; });
+  ['#tFd', '#tFh', '#tAd', '#tAh'].forEach(s => { $(s).onchange = rec; });
 
   // El trabajador se busca escribiendo: son muchos y con un desplegable
   // largo hay que recorrerlo entero para encontrar a alguien.
   let tempEv = null;
   const buscarEv = () => {
-    const texto = $('#sEv').value.trim().toLowerCase();
+    const texto = $('#tEv').value.trim().toLowerCase();
     if (!texto) { S.evaluador = ''; cargar(); return; }
     const lista = S.catalogos.evaluadores || [];
     const exacto = lista.find(x => (x.nombre || '').toLowerCase() === texto);
@@ -132,29 +128,29 @@ function esqueleto(cont) {
       cargar();
     }
   };
-  $('#sEv').oninput = () => { clearTimeout(tempEv); tempEv = setTimeout(buscarEv, 400); };
-  $('#sEv').onchange = () => { clearTimeout(tempEv); buscarEv(); };
-  $('#sEvX').onclick = () => { $('#sEv').value = ''; S.evaluador = ''; cargar(); };
-  $('#sR').onclick = cargar;
-  $('#sLimpiar').onclick = () => {
+  $('#tEv').oninput = () => { clearTimeout(tempEv); tempEv = setTimeout(buscarEv, 400); };
+  $('#tEv').onchange = () => { clearTimeout(tempEv); buscarEv(); };
+  $('#tEvX').onclick = () => { $('#tEv').value = ''; S.evaluador = ''; cargar(); };
+  $('#tR').onclick = cargar;
+  $('#tLimpiar').onclick = () => {
     S.fechaDesde = S.fechaHasta = S.actualizaDesde = S.actualizaHasta = '';
     S.catLoteId = ''; S.evaluador = '';
-    $('#sFd').value = ''; $('#sFh').value = '';
-    $('#sAd').value = ''; $('#sAh').value = '';
-    $('#sLo').value = ''; $('#sEv').value = '';
+    $('#tFd').value = ''; $('#tFh').value = '';
+    $('#tAd').value = ''; $('#tAh').value = '';
+    $('#tLo').value = ''; $('#tEv').value = '';
     cargar();
   };
 
   // Buscador de lotes: 500 opciones, se filtran contra el servidor
   let temp = null;
-  $('#sLo').oninput = e => {
+  $('#tLo').oninput = e => {
     clearTimeout(temp);
     const v = e.target.value;
     temp = setTimeout(async () => {
       if (!v.trim()) { S.catLoteId = ''; cargar(); return; }
       try {
         const r = await API.lotes(v);
-        $('#sLoList').innerHTML = (r.lotes || []).slice(0, 40)
+        $('#tLoList').innerHTML = (r.lotes || []).slice(0, 40)
           .map(l => `<option value="${esc(l.nombre)}"></option>`).join('');
         const exacto = (r.lotes || []).find(l => l.nombre === v);
         if (exacto) { S.catLoteId = exacto.cat_lote_id; cargar(); }
@@ -169,15 +165,15 @@ function esqueleto(cont) {
 async function cargar() {
   document.querySelectorAll('.ftab').forEach(b =>
     b.classList.toggle('active', b.dataset.tab === S.tab));
-  const c = $('#sC');
+  const c = $('#tC');
   if (!c) return;
 
   if (S.tab === 'descargas') return vistaDescargas(c);
 
   if (!hayFecha()) {
     c.innerHTML = `<div class="vacio"><h3>Selecciona un rango de fechas</h3>
-      <p>Puedes filtrar por <strong>fecha del censo</strong> —cuándo se hizo la
-         lectura— o por <strong>fecha de actualización</strong>, que es el día en
+      <p>Puedes filtrar por <strong>fecha del tratamiento</strong> —cuándo se
+         aplicó— o por <strong>fecha de actualización</strong>, que es el día en
          que los registros se descargaron del celular.</p>
       <p>Sin filtro la consulta recorrería toda la tabla, que crece cada día.</p>
       </div>`;
@@ -194,7 +190,7 @@ async function cargar() {
         registros: r.duplicados, total: r.total, grupos: r.grupos,
         limite: 1000, truncado: r.total >= 1000,
         resumen: { registros: r.total, lotes: null, evaluadores: null,
-                   enfermedades: null, erroneos: null, anulados: null },
+                   tratamientos: null, cantidad_total: null, anulados: null },
       };
     } else {
       S.datos = await API.revision(filtros());
@@ -208,7 +204,7 @@ async function cargar() {
 
 function periodoTexto() {
   if (S.fechaDesde || S.fechaHasta)
-    return `Censo del ${S.fechaDesde || '…'} al ${S.fechaHasta || '…'}`;
+    return `Tratamientos del ${S.fechaDesde || '…'} al ${S.fechaHasta || '…'}`;
   if (S.actualizaDesde === S.actualizaHasta && S.actualizaDesde)
     return `Descargado el ${S.actualizaDesde}`;
   return `Descargado del ${S.actualizaDesde || '…'} al ${S.actualizaHasta || '…'}`;
@@ -221,23 +217,19 @@ function vistaRevision(c) {
   const d = S.datos, r = d.resumen || {};
 
   // Cuando no hay registros NO se vacía la pantalla: las casillas tienen
-  // que seguir ahí para poder desmarcarlas. Si desaparecieran junto con
-  // la tabla, quedarías con un filtro activo y sin forma de quitarlo.
+  // que seguir ahí para poder desmarcarlas.
   const vacio = !d.registros.length;
   const motivoVacio = S.soloDuplicados
     ? `<h3>Ningún duplicado</h3>
-       <p>No hay dos lecturas de la misma palma el mismo día en este período.
-          Desmarca <strong>Solo duplicados</strong> para ver todos los registros.</p>`
+       <p>No hay dos tratamientos de la misma palma el mismo día en este
+          período. Desmarca <strong>Solo duplicados</strong> para ver todos
+          los registros.</p>`
     : S.verAnulados
     ? `<h3>Ningún registro anulado</h3>
        <p>En este período no se ha anulado nada. Desmarca
           <strong>Solo anulados</strong> aquí arriba para ver los normales.</p>`
-    : S.soloErroneos
-      ? `<h3>Ninguna palma inexistente</h3>
-         <p>Todas las lecturas de este período apuntan a palmas del catálogo.
-            Desmarca <strong>Solo palmas inexistentes</strong> para ver el resto.</p>`
-      : `<h3>Sin registros</h3>
-         <p>${esc(periodoTexto())}. Prueba con otro rango de fechas.</p>`;
+    : `<h3>Sin registros</h3>
+       <p>${esc(periodoTexto())}. Prueba con otro rango de fechas.</p>`;
 
   c.innerHTML = `
     ${vacio ? '' : (S.soloDuplicados ? `<div class="kpis">
@@ -256,9 +248,10 @@ function vistaRevision(c) {
         <div class="s">${esc(periodoTexto())}</div></div>
       <div class="kpi"><div class="l">Lotes</div><div class="v">${n0(r.lotes)}</div></div>
       <div class="kpi"><div class="l">Evaluadores</div><div class="v">${n0(r.evaluadores)}</div></div>
-      <div class="kpi"><div class="l">Enfermedades</div><div class="v">${n0(r.enfermedades)}</div></div>
-      ${r.erroneos ? `<div class="kpi"><div class="l">Con palma inexistente</div>
-        <div class="v" style="color:var(--danger)">${n0(r.erroneos)}</div></div>` : ''}
+      <div class="kpi"><div class="l">Tratamientos</div><div class="v">${n0(r.tratamientos)}</div></div>
+      <div class="kpi"><div class="l">Cantidad aplicada</div>
+        <div class="v">${cant(r.cantidad_total)}</div>
+        <div class="s">suma de lo vigente</div></div>
       ${r.anulados ? `<div class="kpi"><div class="l">Anulados</div>
         <div class="v">${n0(r.anulados)}</div></div>` : ''}
     </div>`)}
@@ -267,9 +260,9 @@ function vistaRevision(c) {
       registros anulados</strong>. Puedes reactivarlos si alguno se descartó
       por error.</div>` : ''}
 
-    ${S.soloDuplicados && !vacio ? `<div class="msg msg-warn">Dos o más lecturas
-      de la <strong>misma palma el mismo día</strong>. Suele ser un doble
-      registro: revisa cuál conservar y anula el resto.
+    ${S.soloDuplicados && !vacio ? `<div class="msg msg-warn">Dos o más
+      tratamientos de la <strong>misma palma el mismo día</strong>. Suele ser
+      un doble registro: revisa cuál conservar y anula el resto.
       <br>Ser duplicado depende de las otras filas, así que al anular una el
       resto puede dejar de aparecer aquí.</div>` : ''}
 
@@ -280,20 +273,17 @@ function vistaRevision(c) {
       <div style="display:flex;justify-content:space-between;align-items:flex-start;
                   gap:14px;flex-wrap:wrap;margin-bottom:12px">
         <div>
-          <h3 style="margin:0">Registros del censo</h3>
+          <h3 style="margin:0">Registros de tratamientos</h3>
           <p class="sub" style="margin:6px 0 0">Selecciona uno para corregir todos
             sus campos, o varios para cambiarles el lote de una vez. La columna
             <strong>Corregido</strong> muestra quién tocó cada registro.</p>
         </div>
         <div style="display:flex;gap:9px;flex-wrap:wrap;align-items:center">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
-            <input type="checkbox" id="sErr" ${S.soloErroneos ? 'checked' : ''}>
-            Solo palmas inexistentes</label>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
-            <input type="checkbox" id="sDup" ${S.soloDuplicados ? 'checked' : ''}>
+            <input type="checkbox" id="tDup" ${S.soloDuplicados ? 'checked' : ''}>
             Solo duplicados</label>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
-            <input type="checkbox" id="sAnu" ${S.verAnulados ? 'checked' : ''}>
+            <input type="checkbox" id="tAnu" ${S.verAnulados ? 'checked' : ''}>
             Solo anulados</label>
           <a class="btn btn-ghost" href="${S.soloDuplicados
             ? API.urlDuplicadosExcel(filtros()) : API.urlRevisionExcel(filtros())}"
@@ -301,39 +291,41 @@ function vistaRevision(c) {
         </div>
       </div>
 
-      <div class="fbar" id="sAcciones" style="margin-bottom:14px;display:none">
-        <strong id="sSelN" style="font-size:14px"></strong>
+      <div class="fbar" id="tAcciones" style="margin-bottom:14px;display:none">
+        <strong id="tSelN" style="font-size:14px"></strong>
         <div class="sp"></div>
-        <button class="btn btn-primary" id="sEditar">Corregir</button>
-        <button class="btn btn-ghost" id="sAnular">Anular</button>
-        <button class="btn btn-ghost" id="sReactivar">Reactivar</button>
-        <button class="btn btn-ghost" id="sQuitar">Quitar selección</button>
+        <button class="btn btn-primary" id="tEditar">Corregir</button>
+        <button class="btn btn-ghost" id="tAnular">Anular</button>
+        <button class="btn btn-ghost" id="tReactivar">Reactivar</button>
+        <button class="btn btn-ghost" id="tQuitar">Quitar selección</button>
       </div>
 
       ${vacio ? `<div class="vacio" style="padding:36px 20px">${motivoVacio}</div>` : `
       <div class="twrap">
         <table class="ft">
           <thead><tr>
-            <th style="width:34px"><input type="checkbox" id="sTodos" title="Seleccionar todo"></th>
+            <th style="width:34px"><input type="checkbox" id="tTodos" title="Seleccionar todo"></th>
             <th>Fecha</th><th class="num">Hora</th><th>Lote</th>
             <th class="num">Línea</th><th class="num">Palma</th>
-            <th>Enfermedad</th><th>Evento</th><th>Trabajador</th>
+            <th>Enfermedad</th><th>Evento</th><th>Tratamiento</th>
+            <th class="num">Cantidad</th><th>Trabajador</th>
             <th>Observaciones</th>
             ${S.soloDuplicados ? '<th class="num">Veces</th>' : '<th>Corregido</th>'}
             <th class="num">ID único</th>
           </tr></thead>
-          <tbody>${d.registros.map(x => `<tr data-id="${x.san_enf_lectura_id}"
+          <tbody>${d.registros.map(x => `<tr data-id="${x.san_enf_tratamiento_id}"
               ${x.anulado ? 'style="opacity:.5"' : ''}>
-            <td><input type="checkbox" class="sSel" value="${x.san_enf_lectura_id}"
-                 ${S.seleccion.has(x.san_enf_lectura_id) ? 'checked' : ''}></td>
+            <td><input type="checkbox" class="tSel" value="${x.san_enf_tratamiento_id}"
+                 ${S.seleccion.has(x.san_enf_tratamiento_id) ? 'checked' : ''}></td>
             <td>${esc(x.fecha)}</td>
             <td class="num">${hora(x.hora)}</td>
-            <td class="ln">${esc(x.lote ?? '—')}
-              ${x.erroneo ? `<span class="sem sem-deficiente" title="La palma no existe en el catálogo">!</span>` : ''}</td>
+            <td class="ln">${esc(x.lote ?? '—')}</td>
             <td class="num">${x.linea ?? '—'}</td>
             <td class="num">${x.palma ?? '—'}</td>
             <td>${esc(x.enfermedad ?? '—')}</td>
             <td>${esc(x.evento ?? '—')}</td>
+            <td title="${esc(x.descripcion ?? '')}">${esc(x.tratamiento ?? '—')}</td>
+            <td class="num">${cant(x.cantidad)}</td>
             <td>${esc(x.trabajador ?? '—')}</td>
             <td style="max-width:220px">${esc(x.observaciones ?? '')}</td>
             ${S.soloDuplicados
@@ -349,20 +341,15 @@ function vistaRevision(c) {
       </div>`}
     </div>
 
-    <div id="sModal"></div>`;
+    <div id="tModal"></div>`;
 
-  $('#sErr').onchange = e => {
-    S.soloErroneos = e.target.checked;
+  $('#tAnu').onchange = e => {
+    S.verAnulados = e.target.checked;
+    if (e.target.checked) S.soloDuplicados = false;   // son excluyentes
     S.seleccion.clear();          // los ids anteriores ya no están en la tabla
     cargar();
   };
-  $('#sAnu').onchange = e => {
-    S.verAnulados = e.target.checked;
-    if (e.target.checked) S.soloDuplicados = false;   // son excluyentes
-    S.seleccion.clear();
-    cargar();
-  };
-  $('#sDup').onchange = e => {
+  $('#tDup').onchange = e => {
     S.soloDuplicados = e.target.checked;
     if (e.target.checked) S.verAnulados = false;
     S.seleccion.clear();
@@ -372,17 +359,17 @@ function vistaRevision(c) {
   // Con la tabla vacía estos elementos no existen, pero las casillas
   // de arriba sí: por eso cada acceso se protege en vez de salir antes.
   const refrescar = () => {
-    const barra = $('#sAcciones');
+    const barra = $('#tAcciones');
     if (!barra) return;
     const n = S.seleccion.size;
     barra.style.display = n ? 'flex' : 'none';
-    $('#sSelN').textContent = n === 1
+    $('#tSelN').textContent = n === 1
       ? '1 registro seleccionado'
       : `${n} registros seleccionados`;
-    $('#sEditar').textContent = n === 1 ? 'Corregir registro' : 'Corregir lote';
+    $('#tEditar').textContent = n === 1 ? 'Corregir registro' : 'Corregir lote';
   };
 
-  c.querySelectorAll('.sSel').forEach(chk => {
+  c.querySelectorAll('.tSel').forEach(chk => {
     chk.onchange = () => {
       const id = Number(chk.value);
       chk.checked ? S.seleccion.add(id) : S.seleccion.delete(id);
@@ -390,9 +377,9 @@ function vistaRevision(c) {
     };
   });
 
-  const todos = $('#sTodos');
+  const todos = $('#tTodos');
   if (todos) todos.onchange = e => {
-    c.querySelectorAll('.sSel').forEach(chk => {
+    c.querySelectorAll('.tSel').forEach(chk => {
       chk.checked = e.target.checked;
       const id = Number(chk.value);
       e.target.checked ? S.seleccion.add(id) : S.seleccion.delete(id);
@@ -400,19 +387,19 @@ function vistaRevision(c) {
     refrescar();
   };
 
-  const quitar = $('#sQuitar');
+  const quitar = $('#tQuitar');
   if (quitar) quitar.onclick = () => {
     S.seleccion.clear();
-    c.querySelectorAll('.sSel').forEach(chk => { chk.checked = false; });
+    c.querySelectorAll('.tSel').forEach(chk => { chk.checked = false; });
     if (todos) todos.checked = false;
     refrescar();
   };
 
-  const editar = $('#sEditar');
+  const editar = $('#tEditar');
   if (editar) editar.onclick = () => abrirModal([...S.seleccion]);
-  const anular = $('#sAnular');
+  const anular = $('#tAnular');
   if (anular) anular.onclick = () => accion('anular');
-  const react = $('#sReactivar');
+  const react = $('#tReactivar');
   if (react) react.onclick = () => accion('reactivar');
 
   refrescar();
@@ -448,18 +435,18 @@ async function abrirModal(ids) {
   const varios = ids.length > 1;
   const cat = S.catalogos;
   const reg = varios ? null
-    : (S.datos.registros.find(x => x.san_enf_lectura_id === ids[0]) || {});
+    : (S.datos.registros.find(x => x.san_enf_tratamiento_id === ids[0]) || {});
 
-  const caja = $('#sModal');
+  const caja = $('#tModal');
   caja.innerHTML = `
-    <div class="modal-fondo" id="sFondo">
+    <div class="modal-fondo" id="tFondo">
       <div class="modal">
         <h3>${varios ? 'Ajuste para elección múltiple de registros'
                      : 'Ajuste para único registro'}</h3>
         <p class="sub">${varios
           ? `${ids.length} registros seleccionados. En una selección múltiple solo
              se puede cambiar el lote: la línea y la palma son propias de cada
-             lectura.`
+             registro.`
           : `Lote ${esc(reg.lote ?? '—')} · línea ${reg.linea ?? '—'} ·
              palma ${reg.palma ?? '—'}. Deja en blanco lo que no quieras cambiar.`}</p>
 
@@ -496,6 +483,20 @@ async function abrirModal(ids) {
             ${(cat.eventos || []).map(x =>
               `<option value="${x.san_evento_enf_id}">${esc(x.codigo)}</option>`).join('')}
           </select>
+        </div>
+        <div class="mcampo">
+          <label for="mTrat">Tratamiento</label>
+          <select id="mTrat">
+            <option value="">— Sin cambio —</option>
+            ${(cat.tratamientos || []).map(x =>
+              `<option value="${x.san_evento_trat_id}"
+                       title="${esc(x.descripcion ?? '')}">${esc(x.codigo)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="mcampo">
+          <label for="mCant">Cantidad</label>
+          <input type="number" id="mCant" min="0" step="any"
+                 placeholder="${reg.cantidad ?? ''}">
         </div>
         <div class="mcampo">
           <label for="mObs">Observaciones</label>
@@ -541,7 +542,7 @@ async function abrirModal(ids) {
 
   const cerrar = () => { caja.innerHTML = ''; };
   $('#mCancelar').onclick = cerrar;
-  $('#sFondo').onclick = e => { if (e.target.id === 'sFondo') cerrar(); };
+  $('#tFondo').onclick = e => { if (e.target.id === 'tFondo') cerrar(); };
 
   $('#mGuardar').onclick = async () => {
     const btn = $('#mGuardar');
@@ -567,11 +568,14 @@ async function abrirModal(ids) {
         if (loteId) campos.cat_lote_id = loteId;
         const linea = $('#mLinea').value.trim();
         const palma = $('#mPalma').value.trim();
+        const cantidad = $('#mCant').value.trim();
         const obs = $('#mObs').value.trim();
         if (linea) campos.linea = Number(linea);
         if (palma) campos.palma = Number(palma);
         if ($('#mEnf').value) campos.san_enfermedades_id = Number($('#mEnf').value);
         if ($('#mEvt').value) campos.san_evento_enf_id = Number($('#mEvt').value);
+        if ($('#mTrat').value) campos.san_evento_trat_id = Number($('#mTrat').value);
+        if (cantidad) campos.cantidad = Number(cantidad);
         if (obs) campos.observaciones = obs;
 
         if (!Object.keys(campos).length) {
@@ -596,19 +600,25 @@ async function abrirModal(ids) {
 // ============================================================
 async function vistaDescargas(c) {
   const fechas = S.catalogos.fechas || [];
+  const acts = S.catalogos.actualizaciones || [];
 
   c.innerHTML = `
     <div class="card">
       <h3>Descargar el consolidado</h3>
-      <p class="sub">El censo de esos días con las correcciones ya aplicadas.
-        Va por <strong>fecha del censo</strong>, no por fecha de descarga: es el
-        trabajo de campo de esa jornada. No incluye los anulados.</p>
+      <p class="sub">Los tratamientos con las correcciones ya aplicadas. Puedes
+        filtrar por <strong>fecha del tratamiento</strong> —cuándo se aplicó—
+        o por <strong>fecha de actualización</strong>, el día en que los
+        registros se descargaron del celular. No incluye los anulados.</p>
 
       <div class="fbar" style="margin-bottom:16px">
-        <div class="g"><label for="dDesde">Desde</label>
-          <input type="date" id="dDesde" value="${fechas[0]?.fecha || hoy()}"></div>
-        <div class="g"><label for="dHasta">Hasta</label>
-          <input type="date" id="dHasta" value="${fechas[0]?.fecha || hoy()}"></div>
+        <div class="g"><label for="dFd">Tratamiento · desde</label>
+          <input type="date" id="dFd" value="${fechas[0]?.fecha || hoy()}"></div>
+        <div class="g"><label for="dFh">hasta</label>
+          <input type="date" id="dFh" value="${fechas[0]?.fecha || hoy()}"></div>
+        <div class="g"><label for="dAd">Actualización · desde</label>
+          <input type="date" id="dAd" value=""></div>
+        <div class="g"><label for="dAh">hasta</label>
+          <input type="date" id="dAh" value=""></div>
         <div class="sp"></div>
         <button class="btn btn-ghost" id="dVer">Ver antes de descargar</button>
         <a class="btn btn-primary" id="dExcel" href="#" download>Descargar Excel</a>
@@ -617,9 +627,10 @@ async function vistaDescargas(c) {
       <div id="dPrev"></div>
     </div>
 
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">
     ${fechas.length ? `
     <div class="card">
-      <h3>Días con censo</h3>
+      <h3>Días con tratamientos</h3>
       <p class="sub">Haz clic en una fecha para seleccionarla.</p>
       <div class="twrap" style="max-height:340px">
         <table class="ft">
@@ -631,20 +642,45 @@ async function vistaDescargas(c) {
           </tr>`).join('')}</tbody>
         </table>
       </div>
-    </div>` : ''}`;
+    </div>` : ''}
+    ${acts.length ? `
+    <div class="card">
+      <h3>Días de actualización</h3>
+      <p class="sub">Haz clic para filtrar por el día de descarga.</p>
+      <div class="twrap" style="max-height:340px">
+        <table class="ft">
+          <thead><tr><th>Fecha</th><th class="num">Registros</th></tr></thead>
+          <tbody>${acts.map(f => `<tr class="dAct" data-f="${f.fecha}"
+              style="cursor:pointer">
+            <td class="ln">${esc(f.fecha)}</td>
+            <td class="num">${n0(f.registros)}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>` : ''}
+    </div>`;
 
   const refrescar = () => {
-    const d = $('#dDesde').value, h = $('#dHasta').value;
-    $('#dExcel').href = API.urlConsolidadoExcel(d, h);
+    $('#dExcel').href = API.urlConsolidadoExcel(
+      $('#dFd').value, $('#dFh').value, $('#dAd').value, $('#dAh').value);
   };
   refrescar();
-  $('#dDesde').onchange = refrescar;
-  $('#dHasta').onchange = refrescar;
+  ['#dFd', '#dFh', '#dAd', '#dAh'].forEach(s => { $(s).onchange = refrescar; });
 
   c.querySelectorAll('.dFecha').forEach(tr => {
     tr.onclick = () => {
-      $('#dDesde').value = tr.dataset.f;
-      $('#dHasta').value = tr.dataset.f;
+      $('#dFd').value = tr.dataset.f;
+      $('#dFh').value = tr.dataset.f;
+      $('#dAd').value = ''; $('#dAh').value = '';
+      refrescar();
+      $('#dVer').click();
+    };
+  });
+  c.querySelectorAll('.dAct').forEach(tr => {
+    tr.onclick = () => {
+      $('#dAd').value = tr.dataset.f;
+      $('#dAh').value = tr.dataset.f;
+      $('#dFd').value = ''; $('#dFh').value = '';
       refrescar();
       $('#dVer').click();
     };
@@ -654,7 +690,8 @@ async function vistaDescargas(c) {
     const prev = $('#dPrev');
     prev.innerHTML = `<div class="cargando">Consultando…</div>`;
     try {
-      const r = await API.consolidado($('#dDesde').value, $('#dHasta').value);
+      const r = await API.consolidado(
+        $('#dFd').value, $('#dFh').value, $('#dAd').value, $('#dAh').value);
       if (!r.total) {
         prev.innerHTML = `<div class="msg msg-warn">No hay registros para esas fechas.</div>`;
         return;
@@ -668,15 +705,18 @@ async function vistaDescargas(c) {
           <table class="ft">
             <thead><tr>${r.columnas.map(x => `<th>${esc(x)}</th>`).join('')}</tr></thead>
             <tbody>${r.registros.map(x => `<tr>
+              <td class="num">${x.registro_id ?? '—'}</td>
               <td>${esc(x.fecha)}</td><td class="num">${hora(x.hora)}</td>
-              <td>${esc(x.evaluador ?? '—')}</td>
-              <td class="num">${x.lote ?? '—'}</td>
-              <td>${esc(x.bloque ?? '')}</td>
+              <td>${esc(x.lote ?? '—')}</td>
               <td class="num">${x.linea ?? '—'}</td>
               <td class="num">${x.palma ?? '—'}</td>
+              <td class="num" style="font-size:12px">${x.palma_id ?? '—'}</td>
+              <td>${esc(x.enfermedad ?? '—')}</td>
               <td>${esc(x.evento ?? '—')}</td>
-              <td>${esc(x.trabajador ?? '—')}</td>
-              <td>${esc(x.romano ?? '—')}</td>
+              <td>${esc(x.tratamiento ?? '—')}</td>
+              <td style="max-width:200px">${esc(x.descripcion ?? '')}</td>
+              <td class="num">${cant(x.cantidad)}</td>
+              <td>${esc(x.evaluador ?? '—')}</td>
               <td style="max-width:200px">${esc(x.observaciones ?? '')}</td>
             </tr>`).join('')}</tbody>
           </table>

@@ -1,110 +1,56 @@
 """
-PalmaData · Sanidad · Censo de enfermedades · Endpoints
-=======================================================
-Rutas bajo /api/sanidad. Todas exigen sesión.
+PalmaData · Sanidad · Tratamientos · Endpoints
+==============================================
+Rutas bajo /api/sanidad/trat. Todas exigen sesión.
 
-El módulo no calcula: la base ya trae las vistas y las funciones de
-corrección. Aquí solo se pasan los filtros y se devuelven los datos.
+Espejo de los endpoints del censo sobre san_enf_tratamiento, sin el
+filtro de erróneos (aquí no existe esa validación) y con la descarga
+del consolidado filtrable también por fecha de actualización.
+
+Los ayudantes de sesión, filtros y Excel se reutilizan del router
+del censo: son idénticos a propósito.
 """
 from datetime import date
-from io import BytesIO
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import Response
-from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
 
-from ...core import security
-from . import repository as repo
+from . import repository_trat as repo
+from .router import (XLSX, _excel, _exigir_fecha, _fila, _filtros, _ids,
+                     _limpiar, _nombre, _quien, sesion)
 
-router = APIRouter(prefix="/api/sanidad", tags=["sanidad"])
-
-XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-VERDE = "16412B"
-
-
-def sesion(request: Request) -> dict:
-    usuario = security.usuario_actual(request)
-    if not usuario:
-        raise HTTPException(401, "Sesión no iniciada.")
-    return usuario
-
-
-def _quien(usuario: dict) -> str:
-    """
-    El username que queda registrado en la corrección.
-
-    Va en texto a propósito: la columna `usuario` de la tabla guarda
-    un tipo (1 directivo, 2 trabajador) y los id del login van de 1 a
-    15, así que un número ahí sería ambiguo para siempre. El username
-    se lee sin cruzar con ninguna otra tabla.
-    """
-    return usuario["usuario"]
-
-
-def _filtros(fecha_desde=None, fecha_hasta=None, actualiza_desde=None,
-             actualiza_hasta=None, cat_lote_id=None, evaluador=None) -> dict:
-    return {"fecha_desde": fecha_desde, "fecha_hasta": fecha_hasta,
-            "actualiza_desde": actualiza_desde,
-            "actualiza_hasta": actualiza_hasta,
-            "cat_lote_id": cat_lote_id, "evaluador": evaluador}
-
-
-def _exigir_fecha(f: dict):
-    """
-    Sin filtro de fecha la consulta recorre toda la tabla, que crece
-    día a día. Se exige al menos uno de los dos rangos.
-    """
-    if not any([f.get("fecha_desde"), f.get("fecha_hasta"),
-                f.get("actualiza_desde"), f.get("actualiza_hasta")]):
-        raise HTTPException(400, "Selecciona un rango de fechas: por fecha "
-                                 "del censo o por fecha de actualización.")
-
-
-def _limpiar(v):
-    if isinstance(v, date):
-        return v.isoformat()
-    if hasattr(v, "quantize"):
-        return float(v)
-    if hasattr(v, "strftime"):
-        return v.strftime("%H:%M:%S")
-    return v
-
-
-def _fila(f: dict) -> dict:
-    return {k: _limpiar(v) for k, v in f.items()}
+# Prefijo RELATIVO: este router se monta dentro del de sanidad, que ya
+# aporta /api/sanidad. Las rutas finales quedan en /api/sanidad/trat/...
+router_trat = APIRouter(prefix="/trat", tags=["sanidad-tratamientos"])
 
 
 # ============================================================
 #  CATÁLOGOS
 # ============================================================
 
-@router.get("/catalogos")
+@router_trat.get("/catalogos")
 def get_catalogos(_=Depends(sesion)):
-    """Todo lo que necesitan los desplegables de la ventana de edición."""
+    """Todo lo que necesitan los desplegables de la ventana de edición.
+
+    Enfermedades y eventos se reutilizan del censo: son los mismos
+    catálogos. Lo propio de aquí son los tratamientos y los
+    evaluadores que registran tratamientos.
+    """
+    from . import repository as repo_censo
     return {"ok": True,
-            "enfermedades": repo.listar_enfermedades(),
-            "eventos": repo.listar_eventos(),
+            "enfermedades": repo_censo.listar_enfermedades(),
+            "eventos": repo_censo.listar_eventos(),
+            "tratamientos": repo.listar_tratamientos(),
             "evaluadores": [_fila(x) for x in repo.listar_evaluadores()],
             "fechas": [_fila(x) for x in repo.fechas_disponibles()],
             "actualizaciones": [_fila(x) for x in repo.fechas_actualizacion()]}
-
-
-@router.get("/lotes")
-def get_lotes(q: str | None = Query(None, description="Nombre o número"),
-              limite: int = Query(500, ge=1, le=2000), _=Depends(sesion)):
-    """
-    Lotes para el desplegable. Son unos 500, por eso el buscador:
-    escribir «138» encuentra «L138-C» sin recorrer la lista.
-    """
-    return {"ok": True, "lotes": repo.listar_lotes(q, limite)}
 
 
 # ============================================================
 #  REVISIÓN
 # ============================================================
 
-@router.get("/revision")
+@router_trat.get("/revision")
 def get_revision(fecha_desde: date | None = Query(None),
                  fecha_hasta: date | None = Query(None),
                  actualiza_desde: date | None = Query(None),
@@ -112,21 +58,20 @@ def get_revision(fecha_desde: date | None = Query(None),
                  cat_lote_id: int | None = Query(None),
                  evaluador: int | None = Query(None),
                  ver_anulados: bool = Query(False),
-                 solo_erroneos: bool = Query(False),
                  limite: int = Query(1000, ge=1, le=10000),
                  _=Depends(sesion)):
     """
-    Los registros del censo para revisar y corregir.
+    Los tratamientos para revisar y corregir.
 
-    Se puede filtrar por fecha del evento o por fecha de actualización
-    —el día en que se descargaron del celular— y además por lote y por
-    evaluador.
+    Se puede filtrar por fecha del tratamiento o por fecha de
+    actualización —el día en que se descargaron del celular— y además
+    por lote y por evaluador.
     """
     f = _filtros(fecha_desde, fecha_hasta, actualiza_desde,
                  actualiza_hasta, cat_lote_id, evaluador)
     _exigir_fecha(f)
 
-    filas = repo.listar_revision(f, ver_anulados, solo_erroneos, limite)
+    filas = repo.listar_revision(f, ver_anulados, limite)
     return {"ok": True, "filtros": {k: _limpiar(v) for k, v in f.items()},
             "total": len(filas), "limite": limite,
             "truncado": len(filas) >= limite,
@@ -134,8 +79,8 @@ def get_revision(fecha_desde: date | None = Query(None),
             "registros": [_fila(x) for x in filas]}
 
 
-@router.get("/distribucion")
-def get_distribucion(campo: str = Query(..., pattern="^(enfermedad|evento|trabajador|lote|fecha)$"),
+@router_trat.get("/distribucion")
+def get_distribucion(campo: str = Query(..., pattern="^(tratamiento|enfermedad|evento|trabajador|lote|fecha)$"),
                      fecha_desde: date | None = Query(None),
                      fecha_hasta: date | None = Query(None),
                      actualiza_desde: date | None = Query(None),
@@ -151,7 +96,7 @@ def get_distribucion(campo: str = Query(..., pattern="^(enfermedad|evento|trabaj
             "datos": [_fila(x) for x in repo.distribucion(campo, f, limite)]}
 
 
-@router.get("/duplicados")
+@router_trat.get("/duplicados")
 def get_duplicados(fecha_desde: date | None = Query(None),
                    fecha_hasta: date | None = Query(None),
                    actualiza_desde: date | None = Query(None),
@@ -161,11 +106,11 @@ def get_duplicados(fecha_desde: date | None = Query(None),
                    limite: int = Query(1000, ge=1, le=10000),
                    _=Depends(sesion)):
     """
-    Mismo día, misma línea, misma palma: casi siempre un error.
+    Mismo día, misma línea, misma palma: casi siempre un doble registro.
 
     Ser duplicado depende de OTRAS filas, por eso es una vista y no una
     columna: si de tres repetidos se anulan dos, el que queda deja de
-    serlo solo. Una columna seguiría diciendo «duplicado».
+    serlo solo.
     """
     f = _filtros(fecha_desde, fecha_hasta, actualiza_desde,
                  actualiza_hasta, cat_lote_id, evaluador)
@@ -183,24 +128,9 @@ def get_duplicados(fecha_desde: date | None = Query(None),
 #  CORRECCIONES
 # ============================================================
 
-def _ids(datos: dict) -> list[int]:
-    ids = datos.get("ids") or []
-    if not isinstance(ids, list) or not ids:
-        raise HTTPException(400, "No se seleccionó ningún registro.")
-    try:
-        return [int(x) for x in ids]
-    except (TypeError, ValueError):
-        raise HTTPException(400, "Hay identificadores inválidos.")
-
-
-@router.post("/corregir-lote")
+@router_trat.post("/corregir-lote")
 def post_corregir_lote(datos: dict = Body(...), usuario=Depends(sesion)):
-    """
-    Cambia el lote de uno o varios registros a la vez.
-
-    Es la corrección más frecuente: el evaluador anotó un lote y
-    resultó ser otro, y suele pasar con toda una tanda de lecturas.
-    """
+    """Cambia el lote de uno o varios tratamientos a la vez."""
     ids = _ids(datos)
     cat_lote_id = datos.get("cat_lote_id")
     if not cat_lote_id:
@@ -213,13 +143,13 @@ def post_corregir_lote(datos: dict = Body(...), usuario=Depends(sesion)):
     return {"ok": True, "corregidos": n}
 
 
-@router.post("/corregir")
+@router_trat.post("/corregir")
 def post_corregir(datos: dict = Body(...), usuario=Depends(sesion)):
     """
-    Corrige un registro campo a campo.
+    Corrige un tratamiento campo a campo.
 
     Los campos que no se envían quedan como estaban: se puede cambiar
-    solo la línea sin tocar el resto.
+    solo la cantidad sin tocar el resto.
     """
     id_registro = datos.get("id")
     if not id_registro:
@@ -227,7 +157,8 @@ def post_corregir(datos: dict = Body(...), usuario=Depends(sesion)):
 
     campos = {k: datos.get(k) for k in
               ("cat_lote_id", "linea", "palma", "san_enfermedades_id",
-               "san_evento_enf_id", "observaciones")}
+               "san_evento_enf_id", "san_evento_trat_id", "cantidad",
+               "observaciones")}
     if all(v in (None, "") for v in campos.values()):
         raise HTTPException(400, "No se envió ningún cambio.")
 
@@ -240,9 +171,9 @@ def post_corregir(datos: dict = Body(...), usuario=Depends(sesion)):
     return {"ok": True, "corregidos": n}
 
 
-@router.post("/anular")
+@router_trat.post("/anular")
 def post_anular(datos: dict = Body(...), usuario=Depends(sesion)):
-    """Marca registros como anulados. No los borra: quedan auditables."""
+    """Marca tratamientos como anulados. No los borra: quedan auditables."""
     ids = _ids(datos)
     try:
         n = repo.anular(ids, _quien(usuario), datos.get("motivo"))
@@ -251,7 +182,7 @@ def post_anular(datos: dict = Body(...), usuario=Depends(sesion)):
     return {"ok": True, "anulados": n}
 
 
-@router.post("/reactivar")
+@router_trat.post("/reactivar")
 def post_reactivar(datos: dict = Body(...), usuario=Depends(sesion)):
     ids = _ids(datos)
     try:
@@ -266,102 +197,76 @@ def post_reactivar(datos: dict = Body(...), usuario=Depends(sesion)):
 # ============================================================
 
 COLUMNAS_CONSOLIDADO = [
-    ("fecha", "Fecha"), ("hora", "Time"), ("evaluador", "EVALUADOR"),
-    ("lote", "LOTE"), ("bloque", "BLOQUE"), ("linea", "LINEA"),
-    ("palma", "PALMA"), ("evento", "EVENTO"), ("trabajador", "Trabajador"),
-    ("romano", "Romano"), ("observaciones", "Observaciones"),
+    ("registro_id", "REGISTRO ID"), ("fecha", "FECHA"), ("hora", "HORA"),
+    ("lote", "LOTE"), ("linea", "LINEA"), ("palma", "PALMA"),
+    ("palma_id", "PALMA ID"), ("enfermedad", "ENFERMEDAD"),
+    ("evento", "EVENTO"), ("tratamiento", "TRATAMIENTO"),
+    ("descripcion", "DESCRIPCION"), ("cantidad", "CANTIDAD"),
+    ("evaluador", "EVALUADOR"), ("observaciones", "OBSERVACIONES"),
 ]
 
 
-def _excel(titulo: str, columnas: list[tuple], filas: list[dict],
-           nota: str | None = None) -> bytes:
-    wb = Workbook()
-    ws = wb.active
-    ws.title = titulo[:31]
-
-    ws.append([etiqueta for _clave, etiqueta in columnas])
-    for f in filas:
-        ws.append([_limpiar(f.get(clave)) for clave, _e in columnas])
-
-    relleno = PatternFill("solid", fgColor=VERDE)
-    for celda in ws[1]:
-        celda.font = Font(bold=True, color="FFFFFF", size=10)
-        celda.fill = relleno
-        celda.alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[1].height = 24
-    for i, (_c, etiqueta) in enumerate(columnas):
-        letra = chr(65 + i) if i < 26 else "A" + chr(65 + i - 26)
-        ws.column_dimensions[letra].width = max(12, min(34, len(etiqueta) + 8))
-    ws.freeze_panes = "A2"
-
-    if nota:
-        guia = wb.create_sheet("filtros")
-        for linea in nota.split("\n"):
-            guia.append([linea])
-        guia.column_dimensions["A"].width = 68
-        guia.cell(row=1, column=1).font = Font(bold=True, size=12, color=VERDE)
-
-    buf = BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
+def _exigir_fecha_descarga(fd, fh, ad, ah):
+    if not any([fd, fh, ad, ah]):
+        raise HTTPException(400, "Selecciona un rango de fechas: por fecha "
+                                 "del tratamiento o por fecha de actualización.")
 
 
-def _nombre(base: str, desde, hasta) -> str:
-    partes = [base]
-    if desde and hasta and desde == hasta:
-        partes.append(str(desde).replace("-", ""))
-    else:
-        if desde:
-            partes.append(str(desde).replace("-", ""))
-        if hasta:
-            partes.append("a_" + str(hasta).replace("-", ""))
-    return "_".join(partes) + ".xlsx"
-
-
-@router.get("/consolidado")
+@router_trat.get("/consolidado")
 def get_consolidado(fecha_desde: date | None = Query(None),
                     fecha_hasta: date | None = Query(None),
+                    actualiza_desde: date | None = Query(None),
+                    actualiza_hasta: date | None = Query(None),
                     _=Depends(sesion)):
     """Vista previa del consolidado antes de descargarlo."""
-    if not fecha_desde and not fecha_hasta:
-        raise HTTPException(400, "Selecciona la fecha del censo a consolidar.")
-    filas = repo.consolidado(fecha_desde, fecha_hasta)
+    _exigir_fecha_descarga(fecha_desde, fecha_hasta,
+                           actualiza_desde, actualiza_hasta)
+    filas = repo.consolidado(fecha_desde, fecha_hasta,
+                             actualiza_desde, actualiza_hasta)
     return {"ok": True, "total": len(filas),
             "columnas": [e for _c, e in COLUMNAS_CONSOLIDADO],
             "registros": [_fila(x) for x in filas[:500]]}
 
 
-@router.get("/consolidado/excel")
+@router_trat.get("/consolidado/excel")
 def get_consolidado_excel(fecha_desde: date | None = Query(None),
                           fecha_hasta: date | None = Query(None),
+                          actualiza_desde: date | None = Query(None),
+                          actualiza_hasta: date | None = Query(None),
                           _=Depends(sesion)):
     """
-    Descarga el consolidado del censo.
+    Descarga el consolidado de tratamientos.
 
-    Va por fecha del EVENTO, no por fecha de descarga: es el censo de
-    esos días con las correcciones ya aplicadas.
+    Filtra por fecha del TRATAMIENTO o por fecha de ACTUALIZACIÓN
+    (el día en que los registros se descargaron del celular),
+    con las correcciones ya aplicadas. No incluye anulados.
     """
-    if not fecha_desde and not fecha_hasta:
-        raise HTTPException(400, "Selecciona la fecha del censo a consolidar.")
+    _exigir_fecha_descarga(fecha_desde, fecha_hasta,
+                           actualiza_desde, actualiza_hasta)
 
-    filas = repo.consolidado(fecha_desde, fecha_hasta)
+    filas = repo.consolidado(fecha_desde, fecha_hasta,
+                             actualiza_desde, actualiza_hasta)
     if not filas:
         raise HTTPException(404, "No hay registros para esas fechas.")
 
-    nota = ("Consolidado del censo de enfermedades\n"
-            f"Fecha del censo: {fecha_desde or 'sin límite'} "
+    nota = ("Consolidado de tratamientos\n"
+            f"Fecha del tratamiento: {fecha_desde or 'sin límite'} "
             f"a {fecha_hasta or 'sin límite'}\n"
+            f"Fecha de actualización: {actualiza_desde or 'sin límite'} "
+            f"a {actualiza_hasta or 'sin límite'}\n"
             f"Registros: {len(filas)}\n"
             "No incluye los anulados.")
 
     contenido = _excel("consolidado", COLUMNAS_CONSOLIDADO, filas, nota)
-    archivo = _nombre("censo_consolidado", fecha_desde, fecha_hasta)
+    archivo = _nombre("tratamientos_consolidado",
+                      fecha_desde or actualiza_desde,
+                      fecha_hasta or actualiza_hasta)
     return Response(content=contenido, media_type=XLSX,
                     headers={"Content-Disposition":
                              f'attachment; filename="{archivo}"'})
 
 
-@router.get("/duplicados/excel")
+@router_trat.get("/duplicados/excel")
 def get_duplicados_excel(fecha_desde: date | None = Query(None),
                          fecha_hasta: date | None = Query(None),
                          actualiza_desde: date | None = Query(None),
@@ -379,19 +284,20 @@ def get_duplicados_excel(fecha_desde: date | None = Query(None),
                 ("linea", "Linea"), ("palma", "Palma"),
                 ("repeticiones", "Veces"),
                 ("enfermedad", "Enfermedad"), ("evento", "Evento"),
+                ("tratamiento", "Tratamiento"), ("cantidad", "Cantidad"),
                 ("trabajador", "Trabajador"),
                 ("observaciones", "Observaciones"),
                 ("id_unico", "ID_unico")]
 
-    nota = ("Registros duplicados del censo\n"
+    nota = ("Registros duplicados de tratamientos\n"
             "Misma palma, misma línea, mismo día.\n"
-            f"Fecha del censo: {fecha_desde or '—'} a {fecha_hasta or '—'}\n"
+            f"Fecha del tratamiento: {fecha_desde or '—'} a {fecha_hasta or '—'}\n"
             f"Fecha de actualización: {actualiza_desde or '—'} "
             f"a {actualiza_hasta or '—'}\n"
             f"Registros: {len(filas)}")
 
     contenido = _excel("duplicados", columnas, filas, nota)
-    archivo = _nombre("censo_duplicados",
+    archivo = _nombre("tratamientos_duplicados",
                       fecha_desde or actualiza_desde,
                       fecha_hasta or actualiza_hasta)
     return Response(content=contenido, media_type=XLSX,
@@ -399,7 +305,7 @@ def get_duplicados_excel(fecha_desde: date | None = Query(None),
                              f'attachment; filename="{archivo}"'})
 
 
-@router.get("/revision/excel")
+@router_trat.get("/revision/excel")
 def get_revision_excel(fecha_desde: date | None = Query(None),
                        fecha_hasta: date | None = Query(None),
                        actualiza_desde: date | None = Query(None),
@@ -407,17 +313,17 @@ def get_revision_excel(fecha_desde: date | None = Query(None),
                        cat_lote_id: int | None = Query(None),
                        evaluador: int | None = Query(None),
                        ver_anulados: bool = Query(False),
-                       solo_erroneos: bool = Query(False),
                        _=Depends(sesion)):
     """La tabla de revisión tal como se ve en pantalla."""
     f = _filtros(fecha_desde, fecha_hasta, actualiza_desde,
                  actualiza_hasta, cat_lote_id, evaluador)
     _exigir_fecha(f)
 
-    filas = repo.listar_revision(f, ver_anulados, solo_erroneos, 10000)
+    filas = repo.listar_revision(f, ver_anulados, 10000)
     columnas = [("fecha", "Fecha"), ("hora", "Hora"), ("lote", "Lote"),
                 ("linea", "Linea"), ("palma", "Palma"),
                 ("enfermedad", "Enfermedad"), ("evento", "Evento"),
+                ("tratamiento", "Tratamiento"), ("cantidad", "Cantidad"),
                 ("trabajador", "Trabajador"),
                 ("observaciones", "Observaciones"),
                 ("fecha_actualizacion", "Fecha actualización"),
@@ -426,24 +332,16 @@ def get_revision_excel(fecha_desde: date | None = Query(None),
                 ("anulado_por", "Anulado por"),
                 ("id_unico", "ID_unico")]
 
-    nota = ("Revisión del censo de enfermedades\n"
-            f"Fecha del censo: {fecha_desde or '—'} a {fecha_hasta or '—'}\n"
+    nota = ("Revisión de tratamientos\n"
+            f"Fecha del tratamiento: {fecha_desde or '—'} a {fecha_hasta or '—'}\n"
             f"Fecha de actualización: {actualiza_desde or '—'} "
             f"a {actualiza_hasta or '—'}\n"
             f"Registros: {len(filas)}")
 
     contenido = _excel("revision", columnas, filas, nota)
-    archivo = _nombre("censo_revision",
+    archivo = _nombre("tratamientos_revision",
                       fecha_desde or actualiza_desde,
                       fecha_hasta or actualiza_hasta)
     return Response(content=contenido, media_type=XLSX,
                     headers={"Content-Disposition":
                              f'attachment; filename="{archivo}"'})
-
-
-# ============================================================
-#  TRATAMIENTOS · sub-router del mismo módulo
-#  (al final para que main.py siga cargando un solo router)
-# ============================================================
-from .router_trat import router_trat  # noqa: E402
-router.include_router(router_trat)
