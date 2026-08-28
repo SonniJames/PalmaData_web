@@ -221,8 +221,8 @@ function vistaRevision(c) {
   const vacio = !d.registros.length;
   const motivoVacio = S.soloDuplicados
     ? `<h3>Ningún duplicado</h3>
-       <p>No hay dos tratamientos de la misma palma el mismo día en este
-          período. Desmarca <strong>Solo duplicados</strong> para ver todos
+       <p>No hay dos tratamientos de la misma palma —mismo lote, misma línea,
+          mismo número— el mismo día en este período. Desmarca <strong>Solo duplicados</strong> para ver todos
           los registros.</p>`
     : S.verAnulados
     ? `<h3>Ningún registro anulado</h3>
@@ -238,7 +238,7 @@ function vistaRevision(c) {
         <div class="s">${esc(periodoTexto())}</div></div>
       <div class="kpi"><div class="l">Casos</div>
         <div class="v">${n0(d.grupos)}</div>
-        <div class="s">combinaciones día · línea · palma</div></div>
+        <div class="s">combinaciones lote · línea · palma · día</div></div>
       <div class="kpi"><div class="l">Por caso</div>
         <div class="v">${d.grupos ? n2(d.total / d.grupos, 1) : '—'}</div>
         <div class="s">repeticiones promedio</div></div>
@@ -261,7 +261,8 @@ function vistaRevision(c) {
       por error.</div>` : ''}
 
     ${S.soloDuplicados && !vacio ? `<div class="msg msg-warn">Dos o más
-      tratamientos de la <strong>misma palma el mismo día</strong>. Suele ser
+      tratamientos de la <strong>misma palma el mismo día</strong> —mismo lote,
+      misma línea, mismo número—. Suele ser
       un doble registro: revisa cuál conservar y anula el resto.
       <br>Ser duplicado depende de las otras filas, así que al anular una el
       resto puede dejar de aparecer aquí.</div>` : ''}

@@ -147,7 +147,11 @@ def distribucion(campo: str, filtros: dict, limite: int = 20) -> list[dict]:
 
 def duplicados(filtros: dict, limite: int = 1000) -> list[dict]:
     """
-    Mismo día, misma línea, misma palma: casi siempre un error.
+    Mismo lote, misma línea, misma palma, mismo día: casi siempre un error.
+
+    El lote va en la clave porque la numeración de líneas y palmas se
+    repite en cada lote: sin él, la línea 7 palma 7 de L192-A y la de
+    L215-B salían como duplicados sin serlo.
 
     El filtro va DENTRO del subquery, no sobre la vista. Si se aplicara
     encima, la ventana ya habría contado las repeticiones sobre toda la
@@ -163,7 +167,7 @@ def duplicados(filtros: dict, limite: int = 1000) -> list[dict]:
                    v.anulado_por, v.anulado_motivo,
                    v.cat_lote_id, v.san_enfermedades_id, v.san_evento_enf_id,
                    v.evaluador_codigo, v.cat_palma_id,
-                   COUNT(*) OVER (PARTITION BY v.fecha, v.linea, v.palma)
+                   COUNT(*) OVER (PARTITION BY v.fecha, v.lote, v.linea, v.palma)
                        AS repeticiones
             FROM plantacion.v_censo_revision v
     """ + _FILTROS + """

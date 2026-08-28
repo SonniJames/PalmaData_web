@@ -106,7 +106,8 @@ def get_duplicados(fecha_desde: date | None = Query(None),
                    limite: int = Query(1000, ge=1, le=10000),
                    _=Depends(sesion)):
     """
-    Mismo día, misma línea, misma palma: casi siempre un doble registro.
+    Mismo lote, misma línea, misma palma, mismo día: casi siempre un
+    doble registro.
 
     Ser duplicado depende de OTRAS filas, por eso es una vista y no una
     columna: si de tres repetidos se anulan dos, el que queda deja de
@@ -117,8 +118,10 @@ def get_duplicados(fecha_desde: date | None = Query(None),
     _exigir_fecha(f)
     filas = repo.duplicados(f, limite)
 
-    # Cuántos grupos distintos hay: tres filas repetidas son un caso, no tres
-    grupos = len({(str(x["fecha"]), x["linea"], x["palma"]) for x in filas})
+    # Cuántos grupos distintos hay: tres filas repetidas son un caso, no tres.
+    # El lote entra en la clave, igual que en la vista.
+    grupos = len({(str(x["fecha"]), x["lote"], x["linea"], x["palma"])
+                  for x in filas})
 
     return {"ok": True, "total": len(filas), "grupos": grupos,
             "duplicados": [_fila(x) for x in filas]}
