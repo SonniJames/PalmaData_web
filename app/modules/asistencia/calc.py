@@ -126,9 +126,11 @@ def analizar(filas: list[dict], top: int = 10) -> dict:
         return {"vacio": True}
 
     # --- Agrupar por trabajador ---
+    # La clave es el código de nómina: el trabajador_id cambia entre
+    # huelleros y partiría a la misma persona en varias filas.
     por_persona: dict = {}
     for f in filas:
-        clave = f.get("trabajador_id")
+        clave = f.get("codigo") or f.get("cod_norm") or f.get("trabajador_id")
         p = por_persona.setdefault(clave, {
             "trabajador_id": clave,
             "codigo": f.get("codigo"),
@@ -303,10 +305,13 @@ def analizar_completos(filas: list[dict], padron: list[dict],
     """
     completos = [f for f in filas if f.get("estado") == "completo"]
 
+    # Se agrupa por código de nómina, no por trabajador_id: la misma
+    # persona tiene un id distinto en cada huellero.
     por_persona: dict = {}
     for f in completos:
-        p = por_persona.setdefault(f["trabajador_id"], {
-            "trabajador_id": f["trabajador_id"],
+        clave = f.get("codigo") or f.get("cod_norm") or f.get("trabajador_id")
+        p = por_persona.setdefault(clave, {
+            "trabajador_id": clave,
             "codigo": f.get("codigo"), "nombre": f.get("nombre"),
             "supervisor": f.get("supervisor"), "marcaciones": [],
         })
@@ -380,7 +385,7 @@ def analizar_completos(filas: list[dict], padron: list[dict],
         clave = t.get("supervisor") or "Sin asignar"
         g = equipos.setdefault(clave, {"supervisor": clave, "personas": set(),
                                        "marcaciones": []})
-        g["personas"].add(t["trabajador_id"])
+        g["personas"].add(t.get("codigo") or t["trabajador_id"])
     for f in completos:
         clave = f.get("supervisor") or "Sin asignar"
         g = equipos.setdefault(clave, {"supervisor": clave, "personas": set(),
@@ -440,7 +445,10 @@ def analizar_revisar(filas: list[dict], padron: list[dict],
 
     # Quién tiene ALGÚN registro. Se cruza por cod_norm, que es la
     # llave común entre la nómina y el huellero.
-    con_registro = {f.get("cod_norm") for f in filas if f.get("cod_norm")}
+    # Se cruza por CÓDIGO DE NÓMINA: el Employee ID cambia entre
+    # huelleros y dejaría a la misma persona partida en dos.
+    con_registro = {f.get("codigo") for f in filas if f.get("codigo")}
+    con_registro |= {f.get("cod_norm") for f in filas if f.get("cod_norm")}
     con_registro |= {f.get("trabajador_id") for f in filas}
 
     revisar = []
@@ -459,7 +467,8 @@ def analizar_revisar(filas: list[dict], padron: list[dict],
 
     fecha_dia = str(filas[0].get("fecha")) if (un_dia and filas) else None
     ausentes = [t for t in padron
-                if t.get("cod_norm") not in con_registro
+                if t.get("codigo") not in con_registro
+                and t.get("cod_norm") not in con_registro
                 and t.get("trabajador_id") not in con_registro]
     for t in ausentes:
         revisar.append({
@@ -483,7 +492,7 @@ def analizar_revisar(filas: list[dict], padron: list[dict],
         clave = t.get("supervisor") or "Sin asignar"
         g = equipos.setdefault(clave, {"supervisor": clave, "personas": set(),
                                        "casos": 0, "sin_marcar": 0})
-        g["personas"].add(t["trabajador_id"])
+        g["personas"].add(t.get("codigo") or t["trabajador_id"])
     for x in revisar:
         clave = x.get("supervisor") or "Sin asignar"
         g = equipos.setdefault(clave, {"supervisor": clave, "personas": set(),

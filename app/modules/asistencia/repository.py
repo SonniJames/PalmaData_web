@@ -347,11 +347,17 @@ def marcaciones_vista(empresa_id: int, anio=None, mes=None, dia=None,
     en más de uno el mismo día. Sin deduplicar, ese día se contaría
     varias veces. Se conserva la mejor: primero la que tiene jornada
     calculable, luego la de mayor duración.
+
+    Se agrupa por CÓDIGO DE NÓMINA (`v.codigo`), no por Employee ID: la
+    misma persona puede tener un id distinto en cada huellero, y
+    agrupar por él la dejaría partida en dos.
     """
     filtro, params = _armar_filtros(empresa_id, anio, mes, dia,
                                     trabajador, supervisor)
     sql = """
-        SELECT DISTINCT ON (COALESCE(v.cod_norm, v.trabajador_id::text), v.fecha)
+        SELECT DISTINCT ON (
+                   COALESCE(v.codigo, v.cod_norm, v.trabajador_id::text),
+                   v.fecha)
                v.marcacion_id, v.codigo, v.nombre, v.supervisor,
                v.trabajador_id, v.cod_huellero, v.cod_norm,
                v.fecha, v.dia, v.anio, v.mes,
@@ -362,7 +368,8 @@ def marcaciones_vista(empresa_id: int, anio=None, mes=None, dia=None,
     if solo_completos:
         sql += " AND v.estado_marcacion = 'completo'"
     sql += """
-        ORDER BY COALESCE(v.cod_norm, v.trabajador_id::text), v.fecha,
+        ORDER BY COALESCE(v.codigo, v.cod_norm, v.trabajador_id::text),
+                 v.fecha,
                  (v.estado_marcacion = 'completo') DESC,
                  v.minutos DESC NULLS LAST, v.marcacion_id
     """
@@ -383,13 +390,24 @@ def padron_activo(empresa_id: int, anio=None, mes=None,
     del huellero igual debía marcar, y su ausencia es justamente lo que
     hay que ver.
     """
-    # DISTINCT ON: una persona de la nómina puede tener VARIAS filas en
-    # asis_trabajador si quedó registrada en más de un huellero. Sin esto
-    # el LEFT JOIN la devuelve repetida, y como cada fila tiene un
-    # trabajador_id distinto, una cruza con la marcación y la otra sale
-    # como «no marcó». Ese era el duplicado que se veía en la tabla.
+    # DISTINCT ON por CÓDIGO DE NÓMINA, no por Employee ID.
+    #
+    # Una misma persona puede estar varias veces en la nómina con el
+    # mismo `codigo` pero distinto `employee_id`: quedó registrada en un
+    # huellero con un id y en otro con uno diferente.
+    #
+    #   5281  Adriana Granda  employee_id 5281
+    #   5281  Adriana Granda  employee_id 5181
+    #
+    # Deduplicar por employee_id las dejaba como dos personas: una
+    # cruzaba con la marcación y la otra salía como «no marcó». El
+    # `codigo` sí identifica a una sola persona.
+    #
+    # Se prefiere la fila que tiene marcaciones (t.id NOT NULL), que es
+    # el mismo criterio que ya usabas: si hay repetido, se conserva el
+    # que tiene registro.
     sql = """
-        SELECT DISTINCT ON (a.cod_norm)
+        SELECT DISTINCT ON (a.codigo)
                a.id AS activo_id, a.codigo, a.nombre, a.supervisor,
                a.cod_norm, a.employee_id,
                t.id AS trabajador_id
@@ -407,8 +425,8 @@ def padron_activo(empresa_id: int, anio=None, mes=None,
             sql += " AND a.supervisor = %s"
             params.append(str(supervisor).strip())
     # El ORDER BY debe empezar por la clave del DISTINCT ON.
-    # t.id NULLS LAST prefiere la fila que sí existe en el huellero.
-    sql += " ORDER BY a.cod_norm, t.id NULLS LAST"
+    # t.id NULLS LAST prefiere la fila que sí tiene marcaciones.
+    sql += " ORDER BY a.codigo, t.id NULLS LAST"
 
     filas = db.fetch_all(sql, tuple(params))
     filas.sort(key=lambda f: (f.get("nombre") or "").lower())
