@@ -58,8 +58,11 @@ MODULOS = [
         "id": "produccion",
         "nombre": "Producción",
         "icono": "chart",
-        "activo": False,
-        "submodulos": [],
+        "activo": True,
+        "submodulos": [
+            {"id": "poli-revision",  "nombre": "Polinización · revisión"},
+            {"id": "poli-descargas", "nombre": "Polinización · descargas"},
+        ],
     },
     {
         "id": "sanidad",
