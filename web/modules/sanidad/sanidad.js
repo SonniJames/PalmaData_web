@@ -62,6 +62,11 @@ export async function montar(cont, sub = 'revision') {
     const m = await import('./plagas.js');
     return m.montar(cont, sub === 'plagas-descargas' ? 'descargas' : 'revision');
   }
+  // Trampas: sobre santrampalectura, sin erróneos ni duplicados, con filtro de trampa.
+  if (String(sub || '').startsWith('trampas')) {
+    const m = await import('./trampas.js');
+    return m.montar(cont, sub === 'trampas-descargas' ? 'descargas' : 'revision');
+  }
   S.tab = sub || 'revision';
   cont.innerHTML = `<div class="cargando">Cargando…</div>`;
   try {

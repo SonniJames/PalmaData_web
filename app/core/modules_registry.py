@@ -76,6 +76,8 @@ MODULOS = [
             {"id": "trat-descargas",  "nombre": "Tratamientos · descargas"},
             {"id": "plagas-revision", "nombre": "Plagas · revisión"},
             {"id": "plagas-descargas","nombre": "Plagas · descargas"},
+            {"id": "trampas-revision", "nombre": "Trampas · revisión"},
+            {"id": "trampas-descargas","nombre": "Trampas · descargas"},
         ],
     },
 ]
