@@ -249,7 +249,8 @@ def consolidado(fecha_desde, fecha_hasta) -> list[dict]:
                c."EVENTO"         AS evento,
                c."Trabajador"     AS trabajador,
                c."Romano"         AS romano,
-               c."Observaciones"  AS observaciones
+               c."Observaciones"  AS observaciones,
+               c."GEOM"           AS geom
         FROM plantacion.v_censo_consolidado c
         WHERE (%s::date IS NULL OR c.fecha_filtro >= %s::date)
           AND (%s::date IS NULL OR c.fecha_filtro <= %s::date)

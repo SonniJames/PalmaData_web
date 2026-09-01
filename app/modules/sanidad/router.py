@@ -272,6 +272,7 @@ COLUMNAS_CONSOLIDADO = [
     ("lote", "LOTE"), ("bloque", "BLOQUE"), ("linea", "LINEA"),
     ("palma", "PALMA"), ("evento", "EVENTO"), ("trabajador", "Trabajador"),
     ("romano", "Romano"), ("observaciones", "Observaciones"),
+    ("geom", "GEOM"),   # geometría en texto WKT, solo para el Excel
 ]
 
 
@@ -449,3 +450,6 @@ def get_revision_excel(fecha_desde: date | None = Query(None),
 # ============================================================
 from .router_trat import router_trat  # noqa: E402
 router.include_router(router_trat)
+
+from .router_plagas import router_plagas  # noqa: E402
+router.include_router(router_plagas)

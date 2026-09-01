@@ -46,6 +46,19 @@ CREMA = "EAE5D9"
 _RE_HORA = re.compile(r"(\d{1,2}):(\d{2})(?::(\d{2}))?")
 
 
+def mejor_jornada(nuevo: dict, actual: dict) -> bool:
+    """
+    ¿La jornada `nuevo` es mejor que `actual` para el mismo día?
+
+    Es el MISMO criterio que ya se usa entre huelleros distintos
+    (marcaciones_vista): primero la que tiene jornada calculable,
+    luego la de mayor duración. En empate se conserva la que ya estaba,
+    que es la que apareció primero en el archivo.
+    """
+    return ((nuevo.get("estado") == "completo", nuevo.get("minutos") or 0)
+            > (actual.get("estado") == "completo", actual.get("minutos") or 0))
+
+
 def dias_del_mes(anio: int, mes: int) -> int:
     """Días que tuvo ese mes. Contempla los años bisiestos."""
     return calendar.monthrange(int(anio), int(mes))[1]
@@ -232,9 +245,17 @@ def leer_excel(contenido: bytes, anio: int, mes: int) -> tuple[dict, list[str]]:
             f"tiene {total_dias}. Los días faltantes quedan sin registro.")
 
     # --- Filas de trabajadores ---
+    # Un mismo código puede venir en VARIAS filas del archivo (el huellero
+    # lo exporta más de una vez). Antes se omitía la segunda fila, y si la
+    # primera era la vacía se perdían las marcas. Ahora se UNEN: los días
+    # de todas las filas van al mismo trabajador y, si un día tiene marcas
+    # en más de una fila, se conserva la mejor jornada con el mismo
+    # criterio que ya se usa entre huelleros (mejor_jornada).
     trabajadores: list[dict] = []
-    vistos: set[str] = set()
-    n_completos = n_incompletas = n_sin = 0
+    por_codigo: dict[str, dict] = {}        # clave -> trabajador en construcción
+    repetidos: dict[str, dict] = {}         # clave -> {codigo, filas}
+    dias_en_conflicto: set[tuple] = set()   # (clave, dia) con marcas en varias filas
+    dias_considerados = sum(1 for d in cols_dia.values() if d <= total_dias)
 
     for nfila, fila in enumerate(filas[1:], start=2):
         if fila is None:
@@ -252,13 +273,21 @@ def leer_excel(contenido: bytes, anio: int, mes: int) -> tuple[dict, list[str]]:
             codigo = nombre          # sin ID, el nombre hace de llave
 
         clave = codigo.lower()
-        if clave in vistos:
-            advertencias.append(
-                f"Fila {nfila}: el código «{codigo}» está repetido. Se omite.")
-            continue
-        vistos.add(clave)
+        t = por_codigo.get(clave)
+        if t is None:
+            t = {"codigo": codigo, "nombre": nombre,
+                 "fila_excel": nfila, "dias": {}}
+            por_codigo[clave] = t
+            trabajadores.append(t)
+        else:
+            rep = repetidos.setdefault(
+                clave, {"codigo": codigo, "filas": [t["fila_excel"]]})
+            rep["filas"].append(nfila)
+            # Si la primera fila venía sin nombre, se toma el de esta
+            if t["nombre"].startswith("Sin nombre (") \
+                    and not nombre.startswith("Sin nombre ("):
+                t["nombre"] = nombre
 
-        dias: list[dict] = []
         for indice, numero_dia in cols_dia.items():
             if numero_dia > total_dias:
                 continue
@@ -267,15 +296,9 @@ def leer_excel(contenido: bytes, anio: int, mes: int) -> tuple[dict, list[str]]:
             j = jornada(marcas)
 
             if j["estado"] == "sin_registro":
-                n_sin += 1
                 continue        # los días sin marcas no se guardan
 
-            if j["estado"] == "completo":
-                n_completos += 1
-            else:
-                n_incompletas += 1
-
-            dias.append({
+            nuevo = {
                 "dia": numero_dia,
                 "fecha": date(int(anio), int(mes), numero_dia),
                 "entrada": j["entrada"],
@@ -284,15 +307,44 @@ def leer_excel(contenido: bytes, anio: int, mes: int) -> tuple[dict, list[str]]:
                 "estado": j["estado"],
                 "n_marcas": j["n_marcas"],
                 "estimado": j.get("estimado", False),
-                "marcas": [t.strftime("%H:%M:%S") for t in marcas],
+                "marcas": [m.strftime("%H:%M:%S") for m in marcas],
                 "departamento": depto,
-            })
-
-        trabajadores.append({"codigo": codigo, "nombre": nombre,
-                             "fila_excel": nfila, "dias": dias})
+            }
+            actual = t["dias"].get(numero_dia)
+            if actual is None:
+                t["dias"][numero_dia] = nuevo
+            else:
+                # Marcas en dos filas para el mismo día: gana la mejor.
+                dias_en_conflicto.add((clave, numero_dia))
+                if mejor_jornada(nuevo, actual):
+                    t["dias"][numero_dia] = nuevo
 
     if not trabajadores:
         return {}, ["No se encontró ningún trabajador en el archivo."]
+
+    # --- Cierre: los días como lista y los conteos sobre el resultado ---
+    # Se cuentan DESPUÉS de unir, para que un trabajador repetido no
+    # infle los números.
+    n_completos = n_incompletas = n_sin = 0
+    for t in trabajadores:
+        t["dias"] = [t["dias"][k] for k in sorted(t["dias"])]
+        for d in t["dias"]:
+            if d["estado"] == "completo":
+                n_completos += 1
+            else:
+                n_incompletas += 1
+        n_sin += dias_considerados - len(t["dias"])
+
+    for rep in repetidos.values():
+        filas_txt = ", ".join(str(f) for f in rep["filas"])
+        advertencias.append(
+            f"El código «{rep['codigo']}» aparece {len(rep['filas'])} veces "
+            f"(filas {filas_txt}). Se unieron sus días en un solo trabajador.")
+    if dias_en_conflicto:
+        advertencias.append(
+            f"{len(dias_en_conflicto)} día(s) tenían marcas en más de una fila "
+            f"del mismo trabajador: se conservó la mejor jornada (completa "
+            f"primero, luego la más larga), el mismo criterio que entre huelleros.")
 
     if col_depto is None:
         advertencias.append(

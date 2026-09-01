@@ -26,7 +26,7 @@ from io import BytesIO
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
-from .excel_loader import (CREMA, MINUTOS_SOSPECHOSOS, VERDE, VERDE2,
+from .excel_loader import (CREMA, MINUTOS_SOSPECHOSOS, VERDE, VERDE2, mejor_jornada,
                            _norm, _txt, dias_del_mes, nombre_mes)
 
 HOJA_DATOS = "formato"
@@ -225,12 +225,8 @@ def leer_excel(contenido: bytes, anio: int, mes: int) -> tuple[dict, list[str]]:
             n_sin += 1
             continue
 
-        if f.day in p["dias"]:
-            duplicados += 1
-            continue
-
         marcas = [t.strftime("%H:%M:%S") for t in (entrada, salida) if t]
-        p["dias"][f.day] = {
+        nuevo = {
             "dia": f.day, "fecha": f,
             "entrada": j["entrada"], "salida": j["salida"],
             "minutos": j["minutos"], "estado": j["estado"],
@@ -238,10 +234,22 @@ def leer_excel(contenido: bytes, anio: int, mes: int) -> tuple[dict, list[str]]:
             "departamento": _txt(celda(fila, "departamento")),
         }
 
-        if j["estado"] == "completo":
-            n_completos += 1
-        else:
-            n_incompletas += 1
+        # Misma persona y fecha en dos filas con marcas: gana la mejor
+        # jornada, el mismo criterio del formato 1 y de entre huelleros.
+        actual = p["dias"].get(f.day)
+        if actual is not None:
+            duplicados += 1
+            if not mejor_jornada(nuevo, actual):
+                continue
+        p["dias"][f.day] = nuevo
+
+    # Los conteos se hacen sobre el resultado, después de resolver repetidos
+    for p in personas.values():
+        for d in p["dias"].values():
+            if d["estado"] == "completo":
+                n_completos += 1
+            else:
+                n_incompletas += 1
 
     if not personas:
         return {}, ["No se encontró ningún registro válido para "
@@ -258,7 +266,8 @@ def leer_excel(contenido: bytes, anio: int, mes: int) -> tuple[dict, list[str]]:
     if duplicados:
         advertencias.append(
             f"{duplicados} fila(s) repetidas (mismo trabajador y fecha). "
-            f"Se conservó la primera de cada una.")
+            f"Se conservó la mejor jornada de cada una (completa primero, "
+            f"luego la más larga).")
     if n_incompletas:
         advertencias.append(
             f"{n_incompletas} día(s) sin jornada calculable: falta la entrada "
