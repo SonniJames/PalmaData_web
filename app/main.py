@@ -45,6 +45,7 @@ MODULOS_BACKEND = [
     "asistencia",
     "sanidad",
     "produccion",
+    "administracion",
 ]
 
 ESTADO_MODULOS: dict[str, dict] = {}

@@ -82,6 +82,16 @@ MODULOS = [
             {"id": "strategus-descargas","nombre": "Strategus · descargas"},
         ],
     },
+    {
+        "id": "administracion",
+        "nombre": "Administración",
+        "icono": "cog",
+        "activo": True,
+        "submodulos": [
+            {"id": "personal", "nombre": "Personal"},
+            # Trampas entra aquí cuando esté su especificación.
+        ],
+    },
 ]
 
 
