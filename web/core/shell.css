@@ -32,7 +32,7 @@
 .side-brand .txt span{color:var(--gold)}
 .collapsed .side-brand .txt{display:none}
 
-.nav{flex:1;overflow-y:auto;padding:14px 12px}
+.nav{flex:1;min-height:0;overflow-y:auto;padding:14px 12px}
 .nav-item{margin-bottom:4px}
 .nav-link{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:9px;color:#c5d6cb;
   font-size:14.5px;font-weight:500;width:100%;background:none;border:none;text-align:left;transition:background .12s,color .12s}
@@ -45,15 +45,23 @@
 .collapsed .nav-link .lbl,.collapsed .nav-link .chev{display:none}
 
 /* Submódulos */
-.submenu{max-height:0;overflow:hidden;transition:max-height .22s ease}
-.submenu.open{max-height:320px}
+/* El tope debe caber TODOS los apartados del módulo mas grande: cada
+   sublink mide ~37px, y Sanidad ya va en 10 (unos 370px). Con 320px el
+   ultimo quedaba cortado por el overflow:hidden y no habia forma de verlo,
+   porque el recorte pasa DENTRO del submenu: el nav no se desborda y por
+   eso tampoco aparecia scroll. 1200px deja espacio para ~32 apartados;
+   es solo un tope para la animacion, no reserva altura. */
+.submenu{max-height:0;overflow:hidden;transition:max-height .25s ease}
+.submenu.open{max-height:1200px}
 .sublink{display:block;padding:9px 12px 9px 44px;color:#a9c2b4;font-size:13.5px;border-radius:8px;
   width:100%;background:none;border:none;text-align:left}
 .sublink:hover{background:rgba(255,255,255,.06);color:#fff}
 .sublink.active{color:#fff;font-weight:600}
 .collapsed .submenu{display:none}
 
-.side-foot{padding:14px 18px;border-top:1px solid rgba(255,255,255,.08);font-size:12px;color:#7fa08d;white-space:nowrap}
+/* flex:none para que el pie no se comprima cuando el nav crece: sin el,
+   el navegador puede encogerlo en vez de dejar que el nav haga scroll. */
+.side-foot{flex:none;padding:14px 18px;border-top:1px solid rgba(255,255,255,.08);font-size:12px;color:#7fa08d;white-space:nowrap}
 .collapsed .side-foot{display:none}
 
 /* ---------- Main ---------- */
