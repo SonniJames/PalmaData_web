@@ -456,3 +456,6 @@ router.include_router(router_plagas)
 
 from .router_trampas import router_trampas  # noqa: E402
 router.include_router(router_trampas)
+
+from .router_strategus import router_strategus  # noqa: E402
+router.include_router(router_strategus)
