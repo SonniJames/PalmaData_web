@@ -89,7 +89,7 @@ MODULOS = [
         "activo": True,
         "submodulos": [
             {"id": "personal", "nombre": "Personal"},
-            # Trampas entra aquí cuando esté su especificación.
+            {"id": "trampas",  "nombre": "Trampas"},
         ],
     },
 ]

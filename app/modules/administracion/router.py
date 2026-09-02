@@ -173,3 +173,10 @@ def post_reactivar(datos: dict = Body(...), usuario=Depends(sesion)):
     except Exception as e:
         raise HTTPException(400, str(e).split("\n")[0])
     return {"ok": True, "reactivados": n}
+
+
+# ============================================================
+#  TRAMPAS · se monta al final, cuando los ayudantes ya existen
+# ============================================================
+from .router_trampas import router_trampas  # noqa: E402
+router.include_router(router_trampas)
