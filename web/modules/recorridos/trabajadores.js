@@ -11,8 +11,14 @@
 // ============================================================
 import { API } from './api.js';
 
-const LEAFLET_CSS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+// Leaflet se sirve desde ESTE servidor, no desde internet: en el campo la
+// salida a la red no siempre existe, y si la librería no carga no se ve
+// nada, ni siquiera los lotes.
+const LEAFLET_CSS = '/assets/leaflet/leaflet.css';
+const LEAFLET_JS = '/assets/leaflet/leaflet.js';
+// El fondo de calles SÍ viene de internet. Si no carga, los tiles quedan en
+// blanco pero los lotes y el recorrido se dibujan igual: para ubicarse
+// dentro de la plantación, los polígonos son lo que importa.
 const TILES = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 
 const S = {
@@ -21,8 +27,8 @@ const S = {
   trabajador: '',
   fechas: null,
   trabajadores: [],
-  mapa: null, capaLotes: null, capaRuta: null,
-  lotesGeo: null,
+  mapa: null, capaPlantacion: null, capaLotes: null, capaRuta: null,
+  lotesGeo: null, plantacionGeo: null,
 };
 
 const $ = (s, c = document) => c.querySelector(s);
@@ -43,8 +49,14 @@ function cargarLeaflet() {
     }
     const js = document.createElement('script');
     js.src = LEAFLET_JS;
-    js.onload = () => ok();
-    js.onerror = () => mal(new Error('No se pudo cargar el mapa (Leaflet). Revisa la conexión a internet.'));
+    // onload no basta: un proxy puede devolver 200 con un cuerpo vacío y el
+    // script "carga" sin definir L. Por eso se comprueba window.L.
+    js.onload = () => window.L
+      ? ok()
+      : mal(new Error('El archivo de Leaflet se descargó pero llegó vacío o incompleto. '
+                      + 'Revisa que exista /assets/leaflet/leaflet.js en el servidor.'));
+    js.onerror = () => mal(new Error('No se encontró /assets/leaflet/leaflet.js en el servidor. '
+                                     + 'Copia la carpeta web/assets/leaflet/ del paquete.'));
     document.head.appendChild(js);
   });
 }
@@ -85,7 +97,8 @@ function esqueleto(cont) {
     <div id="rTarjetas"></div>
     <div class="card" style="padding:10px">
       <div id="rMapa"></div>
-      <p class="sub" style="margin:8px 0 0">Los polígonos verdes son los lotes activos.
+      <p class="sub" style="margin:8px 0 0">La línea punteada clara es el límite de la
+        plantación; los polígonos verdes son los lotes activos.
         El recorrido se dibuja con los puntos que cayeron dentro de los lotes,
         en orden de hora; el círculo marca el inicio y el cuadrado el final.</p>
     </div>
@@ -199,29 +212,62 @@ async function cargarTrabajadores() {
 // ── Mapa ─────────────────────────────────────────────────────
 async function iniciarMapa() {
   const caja = $('#rMapa');
+  // TODO el arranque va dentro del try. Antes solo cubría la descarga de la
+  // librería, así que si Leaflet no quedaba disponible el `L.map` de abajo
+  // reventaba fuera del try y el mapa se quedaba en gris, sin ningún aviso.
   try {
     await cargarLeaflet();
-  } catch (e) {
-    caja.innerHTML = `<div class="msg msg-err" style="margin:14px">${esc(e.message)}</div>`;
-    return;
-  }
-  if (S.mapa) { S.mapa.remove(); S.mapa = null; }
-  S.mapa = L.map(caja, { zoomControl: true });
-  L.tileLayer(TILES, { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(S.mapa);
-  S.mapa.setView([6.9, -73.5], 12);   // se recentra al cargar los lotes
 
-  try {
+    if (S.mapa) { S.mapa.remove(); S.mapa = null; }
+    S.mapa = L.map(caja, { zoomControl: true });
+
+    const capaTiles = L.tileLayer(TILES, { maxZoom: 19, attribution: '© OpenStreetMap' });
+    let avisoTiles = false;
+    capaTiles.on('tileerror', () => {
+      if (avisoTiles) return;
+      avisoTiles = true;
+      $('#rInfo').innerHTML = `<div class="msg msg-warn">No se pudo cargar el fondo
+        de calles (necesita internet). Los lotes y el recorrido se ven igual.</div>`;
+    });
+    capaTiles.addTo(S.mapa);
+    S.mapa.setView([6.9, -73.5], 12);   // se recentra al cargar los lotes
+
+    // El contenedor se mide al crear el mapa. Si en ese momento todavía no
+    // tenía su alto definitivo, Leaflet cree que mide 0 y no pinta nada.
+    setTimeout(() => S.mapa && S.mapa.invalidateSize(), 200);
+
+    // La plantación va DEBAJO de los lotes y bien clarita: es el contexto,
+    // no el protagonista. Los lotes se ven como antes.
+    try {
+      if (!S.plantacionGeo) S.plantacionGeo = await API.plantacion();
+      if (S.plantacionGeo.features && S.plantacionGeo.features.length) {
+        S.capaPlantacion = L.geoJSON(S.plantacionGeo, {
+          style: { color: '#2f6b46', weight: 1, opacity: .45, dashArray: '4 4',
+                   fillColor: '#79b48f', fillOpacity: .06 },
+          interactive: false,
+        }).addTo(S.mapa);
+      }
+    } catch { /* sin plantación el mapa sigue sirviendo */ }
+
     if (!S.lotesGeo) S.lotesGeo = await API.lotes();
+    if (!S.lotesGeo.features || !S.lotesGeo.features.length) {
+      $('#rInfo').innerHTML = `<div class="msg msg-warn">No hay lotes activos con
+        geometría en cat_lote: el mapa sale sin los polígonos de fondo.</div>`;
+      return;
+    }
     S.capaLotes = L.geoJSON(S.lotesGeo, {
       style: { color: '#2f6b46', weight: 1.2, fillColor: '#79b48f', fillOpacity: .18 },
       onEachFeature: (f, capa) => {
         capa.bindTooltip(f.properties.nombre, { permanent: false, direction: 'center', className: 'lote-etiqueta' });
       },
     }).addTo(S.mapa);
-    const b = S.capaLotes.getBounds();
+    // Encuadre: la plantación completa si existe, si no los lotes
+    const b = (S.capaPlantacion && S.capaPlantacion.getBounds().isValid())
+      ? S.capaPlantacion.getBounds() : S.capaLotes.getBounds();
     if (b.isValid()) S.mapa.fitBounds(b, { padding: [10, 10] });
   } catch (e) {
-    $('#rInfo').innerHTML = `<div class="msg msg-warn">No se pudieron cargar los lotes: ${esc(e.message)}</div>`;
+    caja.innerHTML = `<div class="msg msg-err" style="margin:14px">
+      No se pudo iniciar el mapa: ${esc(e.message)}</div>`;
   }
 }
 

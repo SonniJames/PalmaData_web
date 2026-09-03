@@ -24,6 +24,7 @@ export const API = {
   fechas: () => pedir(`${BASE}/fechas`),
   trabajadores: (modo, fecha) => pedir(`${BASE}/trabajadores?${fechaQ(modo, fecha)}`),
   lotes: () => pedir(`${BASE}/lotes`),
+  plantacion: () => pedir(`${BASE}/plantacion`),
   recorrido: (trabajador, modo, fecha) => {
     const p = fechaQ(modo, fecha);
     p.append('trabajador', trabajador);

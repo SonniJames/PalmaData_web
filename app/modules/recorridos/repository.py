@@ -74,3 +74,11 @@ def lotes() -> list[dict]:
         SELECT cat_lote_id, nombre, geojson
         FROM plantacion.v_lotes_mapa ORDER BY nombre
     """)
+
+
+def plantacion() -> list[dict]:
+    """El polígono de la plantación, en lat/lon, para el fondo del mapa."""
+    return db.fetch_all("""
+        SELECT cat_plantacion_id, nombre, geojson
+        FROM plantacion.v_plantacion_mapa ORDER BY nombre
+    """)

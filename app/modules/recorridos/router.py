@@ -74,6 +74,16 @@ def get_lotes(_=Depends(sesion)):
     return {"type": "FeatureCollection", "features": features}
 
 
+@router.get("/plantacion")
+def get_plantacion(_=Depends(sesion)):
+    """GeoJSON del polígono de la plantación. Se pinta debajo de los lotes."""
+    features = [{"type": "Feature",
+                 "properties": {"cat_plantacion_id": p["cat_plantacion_id"], "nombre": p["nombre"]},
+                 "geometry": p["geojson"]}
+                for p in repo.plantacion()]
+    return {"type": "FeatureCollection", "features": features}
+
+
 @router.get("/recorrido")
 def get_recorrido(trabajador: int = Query(...),
                   fecha: date | None = Query(None),
