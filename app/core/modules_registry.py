@@ -83,6 +83,15 @@ MODULOS = [
         ],
     },
     {
+        "id": "recorridos",
+        "nombre": "Recorridos",
+        "icono": "chart",
+        "activo": True,
+        "submodulos": [
+            {"id": "trabajadores", "nombre": "Recorrido trabajadores"},
+        ],
+    },
+    {
         "id": "administracion",
         "nombre": "Administración",
         "icono": "cog",
