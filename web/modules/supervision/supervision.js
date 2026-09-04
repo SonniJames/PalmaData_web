@@ -14,6 +14,10 @@ export async function montar(cont, sub = 'cosecha') {
     const m = await import('./vagon.js');
     return m.montar(cont);
   }
+  if (s === 'poli' || s.startsWith('poli')) {
+    const m = await import('./polinizacion.js');
+    return m.montar(cont);
+  }
   cont.innerHTML = `<div class="vacio"><h3>Apartado en construcción</h3>
     <p>El apartado «${s}» del módulo Supervisión todavía no existe.</p></div>`;
 }

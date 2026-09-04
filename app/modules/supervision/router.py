@@ -221,3 +221,10 @@ def get_cosecha_excel(fecha_desde: date | None = Query(None),
 # ============================================================
 from .router_vagon import router_vagon  # noqa: E402
 router.include_router(router_vagon)
+
+
+# ============================================================
+#  POLINIZACIÓN
+# ============================================================
+from .router_poli import router_poli  # noqa: E402
+router.include_router(router_poli)

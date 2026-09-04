@@ -90,7 +90,7 @@ MODULOS = [
         "submodulos": [
             {"id": "cosecha", "nombre": "Cosecha lote"},
             {"id": "vagon",   "nombre": "Cosecha vagón"},
-            # Polinización entra aquí cuando esté su tabla.
+            {"id": "poli",    "nombre": "Polinización"},
         ],
     },
     {
