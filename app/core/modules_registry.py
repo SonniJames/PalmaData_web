@@ -67,7 +67,7 @@ MODULOS = [
     {
         "id": "sanidad",
         "nombre": "Sanidad",
-        "icono": "shield",
+        "icono": "bug",
         "activo": True,
         "submodulos": [
             {"id": "revision",        "nombre": "Censo · revisión"},
@@ -85,7 +85,7 @@ MODULOS = [
     {
         "id": "supervision",
         "nombre": "Supervisión",
-        "icono": "clock",
+        "icono": "eye",
         "activo": True,
         "submodulos": [
             {"id": "cosecha", "nombre": "Cosecha lote"},
@@ -96,7 +96,7 @@ MODULOS = [
     {
         "id": "recorridos",
         "nombre": "Recorridos",
-        "icono": "chart",
+        "icono": "map",
         "activo": True,
         "submodulos": [
             {"id": "trabajadores", "nombre": "Recorrido trabajadores"},

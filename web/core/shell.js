@@ -191,7 +191,7 @@ function vistaInicio() {
   return `<div class="welcome">
       <div class="logo-lg"><img src="/assets/logo.jpeg" alt="PalmaData"></div>
       <h1>Bienvenido a Palma<span>Data</span></h1>
-      <p>Sistema de gestión y análisis para el cultivo de palma de aceite de Palmeras de Yarima.
+      <p>Sistema de gestión y análisis para el cultivo de palma de aceite de Grupo Palmero.
          Elige un módulo para comenzar.</p>
       ${otros.length ? `<div class="module-grid">${cards}</div>`
                      : `<p style="color:var(--ink-soft)">Aún no hay módulos activos.</p>`}
