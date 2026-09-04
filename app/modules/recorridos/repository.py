@@ -82,3 +82,21 @@ def plantacion() -> list[dict]:
         SELECT cat_plantacion_id, nombre, geojson
         FROM plantacion.v_plantacion_mapa ORDER BY nombre
     """)
+
+
+def palmas(oeste: float, sur: float, este: float, norte: float,
+           limite: int = 20000) -> dict:
+    """
+    Las palmas activas dentro del rectángulo visible del mapa.
+
+    Devuelve un arreglo plano [lon, lat, lon, lat, ...] en vez de GeoJSON:
+    ocupa la sexta parte y es lo único que el mapa necesita, porque las
+    palmas no llevan etiqueta ni información. Nunca se piden las ~300.000
+    de la plantación: solo las del área que se está viendo.
+    """
+    fila = db.fetch_one("""
+        SELECT * FROM plantacion.palmas_en_area(
+            %s::double precision, %s::double precision,
+            %s::double precision, %s::double precision, %s::integer)
+    """, (oeste, sur, este, norte, limite))
+    return dict(fila) if fila else {"coordenadas": [], "total": 0, "truncado": False}

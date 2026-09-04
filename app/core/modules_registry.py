@@ -83,6 +83,17 @@ MODULOS = [
         ],
     },
     {
+        "id": "supervision",
+        "nombre": "Supervisión",
+        "icono": "clock",
+        "activo": True,
+        "submodulos": [
+            {"id": "cosecha", "nombre": "Cosecha lote"},
+            {"id": "vagon",   "nombre": "Cosecha vagón"},
+            # Polinización entra aquí cuando esté su tabla.
+        ],
+    },
+    {
         "id": "recorridos",
         "nombre": "Recorridos",
         "icono": "chart",

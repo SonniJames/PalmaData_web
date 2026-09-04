@@ -29,6 +29,7 @@ const S = {
   trabajadores: [],
   mapa: null, capaPlantacion: null, capaLotes: null, capaRuta: null,
   lotesGeo: null, plantacionGeo: null,
+  palmasVisible: false, capaPalmas: null, lienzoPalmas: null, palmasCargando: false,
 };
 
 const $ = (s, c = document) => c.querySelector(s);
@@ -97,10 +98,12 @@ function esqueleto(cont) {
     <div id="rTarjetas"></div>
     <div class="card" style="padding:10px">
       <div id="rMapa"></div>
+      <div id="rPalmasAviso"></div>
       <p class="sub" style="margin:8px 0 0">La línea punteada clara es el límite de la
         plantación; los polígonos verdes son los lotes activos.
         El recorrido se dibuja con los puntos que cayeron dentro de los lotes,
-        en orden de hora; el círculo marca el inicio y el cuadrado el final.</p>
+        en orden de hora; el círculo marca el inicio y el cuadrado el final.
+        Con el botón 🌴 se muestran u ocultan las palmas del área visible.</p>
     </div>
     <div class="card">
       <h3>Días con recorridos</h3>
@@ -261,6 +264,16 @@ async function iniciarMapa() {
         capa.bindTooltip(f.properties.nombre, { permanent: false, direction: 'center', className: 'lote-etiqueta' });
       },
     }).addTo(S.mapa);
+    S.mapa.addControl(botonPalmas());
+    // Al mover o hacer zoom se piden las palmas del área nueva. El retardo
+    // evita disparar una consulta por cada cuadro de la animación.
+    let tempPalmas = null;
+    S.mapa.on('moveend zoomend', () => {
+      if (!S.palmasVisible) return;
+      clearTimeout(tempPalmas);
+      tempPalmas = setTimeout(cargarPalmas, 400);
+    });
+
     // Encuadre: la plantación completa si existe, si no los lotes
     const b = (S.capaPlantacion && S.capaPlantacion.getBounds().isValid())
       ? S.capaPlantacion.getBounds() : S.capaLotes.getBounds();
@@ -268,6 +281,94 @@ async function iniciarMapa() {
   } catch (e) {
     caja.innerHTML = `<div class="msg msg-err" style="margin:14px">
       No se pudo iniciar el mapa: ${esc(e.message)}</div>`;
+  }
+}
+
+// ============================================================
+//  CAPA DE PALMAS
+//
+//  Son ~300.000 en la plantación: mandarlas todas serían 34 MB y ningún
+//  navegador dibuja 300.000 marcadores. Por eso se piden SOLO las del
+//  rectángulo visible, y se vuelven a pedir al mover o hacer zoom.
+//  Se dibujan sobre un lienzo (canvas) en vez de crear un elemento por
+//  palma: con miles de puntos es la diferencia entre fluido y trabado.
+// ============================================================
+const ZOOM_MIN_PALMAS = 14;   // más lejos que esto, el área abarca demasiadas
+
+function botonPalmas() {
+  const Boton = L.Control.extend({
+    options: { position: 'topleft' },
+    onAdd() {
+      const a = L.DomUtil.create('a', 'leaflet-bar');
+      a.href = '#';
+      a.title = 'Mostrar u ocultar las palmas';
+      a.setAttribute('role', 'button');
+      Object.assign(a.style, {
+        width: '30px', height: '30px', lineHeight: '30px',
+        textAlign: 'center', fontSize: '17px', background: '#fff',
+        display: 'block', textDecoration: 'none',
+      });
+      a.innerHTML = '🌴';
+      L.DomEvent.on(a, 'click', L.DomEvent.stop).on(a, 'click', () => {
+        S.palmasVisible = !S.palmasVisible;
+        a.style.background = S.palmasVisible ? '#cfe3d6' : '#fff';
+        if (S.palmasVisible) {
+          cargarPalmas();
+        } else {
+          if (S.capaPalmas) { S.capaPalmas.clearLayers(); }
+          $('#rPalmasAviso').innerHTML = '';
+        }
+      });
+      return a;
+    },
+  });
+  return new Boton();
+}
+
+async function cargarPalmas() {
+  if (!S.palmasVisible || !S.mapa || S.palmasCargando) return;
+  const aviso = $('#rPalmasAviso');
+
+  if (S.mapa.getZoom() < ZOOM_MIN_PALMAS) {
+    if (S.capaPalmas) S.capaPalmas.clearLayers();
+    aviso.innerHTML = `<div class="msg msg-warn">Acerca el mapa para ver las palmas:
+      desde esta altura serían demasiadas.</div>`;
+    return;
+  }
+
+  S.palmasCargando = true;
+  aviso.innerHTML = `<div class="cargando" style="padding:8px">Cargando palmas…</div>`;
+  try {
+    const b = S.mapa.getBounds();
+    const r = await API.palmas({
+      oeste: b.getWest(), sur: b.getSouth(), este: b.getEast(), norte: b.getNorth(),
+    });
+
+    if (!S.capaPalmas) {
+      S.lienzoPalmas = L.canvas({ padding: .3 });
+      S.capaPalmas = L.layerGroup().addTo(S.mapa);
+    }
+    S.capaPalmas.clearLayers();
+
+    // El arreglo viene plano: [lon, lat, lon, lat, ...]
+    const c = r.coordenadas;
+    for (let i = 0; i < c.length; i += 2) {
+      S.capaPalmas.addLayer(L.circleMarker([c[i + 1], c[i]], {
+        renderer: S.lienzoPalmas, radius: 1.7,
+        color: '#1f6b3a', weight: 0, fillColor: '#1f6b3a', fillOpacity: .55,
+        interactive: false,
+      }));
+    }
+
+    aviso.innerHTML = r.truncado
+      ? `<div class="msg msg-warn">Se muestran ${n0(r.total)} palmas, pero hay más
+         en esta vista. Acerca el mapa para verlas todas.</div>`
+      : '';
+  } catch (e) {
+    aviso.innerHTML = `<div class="msg msg-err">No se pudieron cargar las palmas:
+      ${esc(e.message)}</div>`;
+  } finally {
+    S.palmasCargando = false;
   }
 }
 

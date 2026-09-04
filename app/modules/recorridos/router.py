@@ -84,6 +84,26 @@ def get_plantacion(_=Depends(sesion)):
     return {"type": "FeatureCollection", "features": features}
 
 
+@router.get("/palmas")
+def get_palmas(oeste: float = Query(..., description="Longitud mínima"),
+               sur: float = Query(..., description="Latitud mínima"),
+               este: float = Query(..., description="Longitud máxima"),
+               norte: float = Query(..., description="Latitud máxima"),
+               limite: int = Query(20000, ge=100, le=60000),
+               _=Depends(sesion)):
+    """
+    Palmas del área visible, como [lon, lat, lon, lat, ...].
+
+    `truncado` en true significa que había más palmas de las que caben en
+    el límite: la web avisa que hay que acercar el mapa.
+    """
+    if oeste >= este or sur >= norte:
+        raise HTTPException(400, "El área pedida no es válida.")
+    r = repo.palmas(oeste, sur, este, norte, limite)
+    return {"ok": True, "total": r["total"], "truncado": r["truncado"],
+            "coordenadas": r["coordenadas"] or []}
+
+
 @router.get("/recorrido")
 def get_recorrido(trabajador: int = Query(...),
                   fecha: date | None = Query(None),

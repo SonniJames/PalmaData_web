@@ -25,6 +25,11 @@ export const API = {
   trabajadores: (modo, fecha) => pedir(`${BASE}/trabajadores?${fechaQ(modo, fecha)}`),
   lotes: () => pedir(`${BASE}/lotes`),
   plantacion: () => pedir(`${BASE}/plantacion`),
+  palmas: ({ oeste, sur, este, norte, limite }) => {
+    const p = new URLSearchParams({ oeste, sur, este, norte });
+    if (limite) p.append('limite', limite);
+    return pedir(`${BASE}/palmas?${p}`);
+  },
   recorrido: (trabajador, modo, fecha) => {
     const p = fechaQ(modo, fecha);
     p.append('trabajador', trabajador);
