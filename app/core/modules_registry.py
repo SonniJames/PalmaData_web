@@ -103,6 +103,15 @@ MODULOS = [
         ],
     },
     {
+        "id": "carga",
+        "nombre": "Cargar datos",
+        "icono": "upload",
+        "activo": True,
+        "submodulos": [
+            {"id": "archivos", "nombre": "Archivos de la app"},
+        ],
+    },
+    {
         "id": "administracion",
         "nombre": "Administración",
         "icono": "cog",
