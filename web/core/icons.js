@@ -24,6 +24,11 @@ export const ICONS = {
        + '<path d="M7.9 10 4.2 8.2M7.7 13.5H3.9M7.9 17 4.2 18.8'
        + 'M16.1 10l3.7-1.8M16.3 13.5h3.8M16.1 17l3.7 1.8"/>'
        + '<path d="M12 8.5v10"/>',
+  // Flecha de carga: la de siempre, flecha hacia arriba sobre una línea.
+  // La anterior dibujaba una bandeja con la flecha entrando; a 20 píxeles
+  // los bordes de la bandeja se empastaban y se leía peor.
+  upload:'<path d="M12 18V5"/><path d="M6 11l6-6 6 6"/><path d="M5 21h14"/>',
+
   // Mapa doblado: tres paneles con los pliegues marcados. Mismo trazo de
   // línea que los demás, sin relleno, para que no pese más en el menú.
   map:   '<path d="M9 4 3 6.5v13L9 17l6 3 6-2.5v-13L15 7Z"/><path d="M9 4v13"/><path d="M15 7v13"/>',
