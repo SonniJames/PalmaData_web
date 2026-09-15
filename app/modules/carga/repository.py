@@ -7,6 +7,7 @@ funciones de cada tabla corren exactamente igual: a la base no le importa
 por dónde llegó el dato.
 """
 import hashlib
+import re
 from io import BytesIO
 
 from openpyxl import load_workbook
@@ -31,6 +32,36 @@ def columnas_de_tabla(tabla: str) -> list[str]:
         ORDER BY ordinal_position
     """, (tabla,))
     return [f["column_name"] for f in filas]
+
+
+# Un DEFAULT que sea un número suelto: 0, 0.0, -1. Se descartan a propósito
+# los que son expresiones (nextval, now(), gen_random_uuid): esos los tiene
+# que resolver PostgreSQL, no nosotros.
+_DEFAULT_NUMERICO = re.compile(r"^-?\d+(\.\d+)?$")
+
+
+def defaults_de_tabla(tabla: str) -> dict:
+    """
+    El valor por defecto numérico de cada columna que lo tenga.
+
+    Hace falta por algo que no es evidente: un DEFAULT solo se aplica cuando
+    la columna NO se menciona en el INSERT. Como el cargador las menciona
+    todas, una celda vacía del Excel entraba como NULL y se saltaba el
+    DEFAULT 0 de la tabla — mientras que por red el mismo dato llegaba en 0.
+    El registro terminaba distinto según por dónde entrara.
+    """
+    filas = db.fetch_all("""
+        SELECT column_name, column_default
+        FROM information_schema.columns
+        WHERE table_schema = 'plantacion' AND table_name = %s
+          AND column_default IS NOT NULL
+    """, (tabla,))
+    salida = {}
+    for f in filas:
+        bruto = str(f["column_default"]).split("::")[0].strip().strip("'")
+        if _DEFAULT_NUMERICO.match(bruto):
+            salida[f["column_name"]] = float(bruto) if "." in bruto else int(bruto)
+    return salida
 
 
 def leer_excel(contenido: bytes) -> tuple[list[str], list[list]]:
@@ -136,6 +167,12 @@ def insertar(tabla: str, mapa: dict[int, str], filas: list[list],
     # la fila quede idéntica a la que deja la carga por red.
     fijos = {c: v for c, v in FIJOS.get(tabla, {}).items()
              if c not in columnas and c in columnas_bd}
+
+    # Para las celdas vacías: el DEFAULT de la columna, si es un número.
+    # Sin esto, una casilla en blanco del Excel entra como NULL y se salta
+    # el DEFAULT 0 que la tabla declara, cosa que por red no pasa.
+    por_defecto = defaults_de_tabla(tabla)
+    rellenos = [por_defecto.get(c) for c in columnas]
     destino = ", ".join(f'"{c}"' for c in columnas + list(fijos))
 
     # Si el registro pudo haber sido movido ya a otra tabla, se descartan
@@ -166,8 +203,15 @@ def insertar(tabla: str, mapa: dict[int, str], filas: list[list],
     with db.get_cursor() as cur:
         for inicio in range(0, len(filas), LOTE):
             valores_fijos = list(fijos.values())
-            bloque = [[f[i] if i < len(f) else None for i in indices] + valores_fijos
-                      for f in filas[inicio:inicio + LOTE]]
+            bloque = []
+            for f in filas[inicio:inicio + LOTE]:
+                fila = []
+                for n_col, i in enumerate(indices):
+                    valor = f[i] if i < len(f) else None
+                    if valor is None and rellenos[n_col] is not None:
+                        valor = rellenos[n_col]
+                    fila.append(valor)
+                bloque.append(fila + valores_fijos)
             nuevas += len(execute_values(cur, sql, bloque, fetch=True))
 
     return nuevas, total - nuevas

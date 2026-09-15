@@ -35,6 +35,16 @@ TABLAS: dict[str, dict] = {
     # sus archivos se rechazarían con «no reconozco la tabla».
     "sesionesmaquinaria":             {"conflicto": "idunico"},
     "super_tiempos":                  {"conflicto": "id_unico"},
+
+    # Antes se rechazaba: su Excel no traía columna de control. La app ya
+    # genera `id_movil` (un UUID de 36 caracteres), así que se carga como
+    # las demás. Requiere el script 35, que agrega esa columna a la tabla
+    # y le pone el índice único.
+    "propoleninicialfinal":           {"conflicto": "id_movil"},
+
+    # Módulo Medidas vegetativas (formulario 40). La tabla ya trae su
+    # restricción UNIQUE (id), así que no hace falta crearla.
+    "medidas_vegetativas":            {"conflicto": "id"},
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -86,12 +96,10 @@ FIJOS: dict[str, dict] = {
 # avisar en cada carga: no es un problema, es cómo está hecha la app.
 EXTRAS_CONOCIDAS = {"equipo", "sincronizado"}
 
-# Reconocidas pero no se cargan, con el motivo a la vista.
-NO_SOPORTADAS: dict[str, str] = {
-    "propoleninicialfinal":
-        "El archivo no trae columna de control de duplicados, así que subirlo "
-        "dos veces duplicaría los datos sin remedio. Ese módulo no se usa.",
-}
+# Reconocidas pero que no se cargan, con el motivo a la vista. Hoy está
+# vacío: propoleninicialfinal estuvo aquí hasta que la app empezó a generar
+# su `id_movil`. Se conserva la estructura por si vuelve a hacer falta.
+NO_SOPORTADAS: dict[str, str] = {}
 
 
 def tabla_de_archivo(nombre: str) -> tuple[str | None, str | None, int | None]:
