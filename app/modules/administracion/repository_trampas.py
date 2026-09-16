@@ -107,3 +107,15 @@ def reactivar(ids: list[int], usuario: str) -> int:
         cur.execute("SELECT plantacion.trampa_reactivar(%s, %s::text) AS n",
                     (ids, usuario))
         return (cur.fetchone() or {}).get("n", 0)
+
+
+def todas_para_excel() -> list[dict]:
+    """Toda la tabla, activas e inactivas, para la descarga. Sin filtros."""
+    return db.fetch_all("""
+        SELECT v.santrampaid, v.codigo, v.instalacion, v.x, v.y,
+               CASE WHEN v.activa THEN 'Activa' ELSE 'Inactiva' END AS estado_txt,
+               v.lote, v.agregado_por, v.creado_at,
+               v.corregido_por, v.corregido_at, v.anulado_por, v.anulado_en, v.anulado_motivo
+        FROM plantacion.v_admin_trampas v
+        ORDER BY v.activa DESC, v.codigo NULLS LAST
+    """)

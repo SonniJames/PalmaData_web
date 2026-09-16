@@ -13,8 +13,11 @@ from datetime import date
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
+from fastapi.responses import Response
+
 from ...core import security
 from . import repository as repo
+from ..sanidad.router import XLSX, _excel   # el mismo generador de Excel de toda la web
 
 router = APIRouter(prefix="/api/administracion", tags=["administracion"])
 
@@ -173,6 +176,23 @@ def post_reactivar(datos: dict = Body(...), usuario=Depends(sesion)):
     except Exception as e:
         raise HTTPException(400, str(e).split("\n")[0])
     return {"ok": True, "reactivados": n}
+
+
+@router.get("/personal/excel")
+def get_personal_excel(_=Depends(sesion)):
+    """Toda la tabla de personal: activos y anulados, sin filtros."""
+    filas = repo.todos_para_excel()
+    columnas = [
+        ("aux_trabajador_id", "CODIGO"), ("nombre", "NOMBRE"), ("documento", "DOCUMENTO"),
+        ("estado_txt", "ESTADO"), ("supervisor_txt", "SUPERVISOR"), ("codigo_sip", "CODIGO SIP"),
+        ("cargo", "CARGO"), ("agregado_por", "AGREGADO POR"), ("creado_at", "CREADO"),
+        ("corregido_por", "CORREGIDO POR"), ("corregido_at", "CORREGIDO"),
+        ("anulado_por", "ANULADO POR"), ("anulado_en", "ANULADO"), ("anulado_motivo", "MOTIVO"),
+    ]
+    contenido = _excel("personal", columnas, filas,
+                       f"Personal · tabla completa\nRegistros: {len(filas)} (activos y anulados)")
+    return Response(content=contenido, media_type=XLSX,
+                    headers={"Content-Disposition": f'attachment; filename="personal_{date.today():%Y%m%d}.xlsx"'})
 
 
 # ============================================================

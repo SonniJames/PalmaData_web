@@ -80,6 +80,7 @@ MODULOS = [
             {"id": "trampas-descargas","nombre": "Trampas · descargas"},
             {"id": "strategus-revision", "nombre": "Strategus · revisión"},
             {"id": "strategus-descargas","nombre": "Strategus · descargas"},
+            {"id": "medidas",            "nombre": "Medidas vegetativas"},
         ],
     },
     {

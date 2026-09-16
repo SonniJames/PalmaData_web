@@ -169,38 +169,73 @@ function pintarSeleccion(aviso = '') {
 async function subir() {
   if (!S.seleccion.length || S.subiendo) return;
   S.subiendo = true;
-  $('#cSubir').disabled = true;
   $('#cQuitar').disabled = true;
-  $('#cSubir').textContent = 'Cargando…';
-  $('#cResultado').innerHTML = `<div class="cargando">Procesando
-    ${S.seleccion.length} archivo(s)…</div>`;
+  S.resultados = [];
 
-  try {
-    const r = await API.subir(S.seleccion);
-    S.resultados = r;
-    pintarResultado(r);
-    S.seleccion = [];
-    pintarSeleccion();
-    await pintarHistorial();
-  } catch (e) {
-    $('#cResultado').innerHTML = `<div class="msg msg-err">${esc(e.message)}</div>`;
-  } finally {
-    S.subiendo = false;
-    $('#cSubir').textContent = 'Cargar a la base';
-    pintarSeleccion();
+  // De a un archivo. Con internet flojo, mandar los quince en una sola
+  // petición hace que una caída tire todo el lote; así cada archivo que
+  // llega queda confirmado por su cuenta y se ve al momento.
+  const pendientes = [...S.seleccion];
+  let corte = null;
+
+  for (let i = 0; i < pendientes.length; i++) {
+    const f = pendientes[i];
+    $('#cSubir').textContent = `Cargando ${i + 1} de ${pendientes.length}…`;
+    $('#cSubir').disabled = true;
+
+    try {
+      const r = await API.subir(f);
+      S.resultados.push(r.resultados[0]);
+      // Fuera de la lista: lo que quede seleccionado es lo que falta por
+      // cargar, así el botón reintenta justo eso y nada más.
+      S.seleccion = S.seleccion.filter(x => !(x.name === f.name && x.size === f.size));
+    } catch (e) {
+      // Aquí no se sabe si el servidor alcanzó a procesarlo: la petición
+      // pudo morir antes de llegar o después de guardar, con la respuesta
+      // perdida en el camino. Se dice tal cual, y se deja el archivo en la
+      // lista para reintentar — repetirlo no duplica nada.
+      S.resultados.push({
+        archivo: f.name, tabla: null, estado: 'incierto',
+        leidas: 0, nuevas: 0, repetidas: 0, ignoradas: [],
+        mensaje: `Se perdió la conexión (${e.message}). No se pudo confirmar si `
+               + `este archivo alcanzó a guardarse. Revisa el historial de abajo: `
+               + `si aparece, ya entró.`,
+      });
+      corte = pendientes.length - i - 1;
+      break;
+    }
+    pintarResultado(corte);
   }
+
+  pintarResultado(corte);
+  S.subiendo = false;
+  $('#cSubir').textContent = 'Cargar a la base';
+  pintarSeleccion();
+  await pintarHistorial();
 }
 
-function pintarResultado(r) {
-  const t = r.total;
+function pintarResultado(sinEnviar) {
+  const r = { resultados: S.resultados };
+  const t = {
+    archivos: r.resultados.length,
+    nuevas: r.resultados.reduce((a, x) => a + (x.nuevas || 0), 0),
+    repetidas: r.resultados.reduce((a, x) => a + (x.repetidas || 0), 0),
+    con_error: r.resultados.filter(x => x.estado === 'error' || x.estado === 'incierto').length,
+  };
   const marca = {
     ok:      '<span class="sem sem-optimo" style="min-width:auto">Cargado</span>',
     vacio:   '<span class="sem" style="min-width:auto;background:#e8e6e1;color:#6b6560">Sin filas</span>',
     omitido: '<span class="sem" style="min-width:auto;background:#f6e3c8;color:#7a5a1e">Omitido</span>',
     error:   '<span class="sem sem-deficiente" style="min-width:auto">Error</span>',
+    incierto:'<span class="sem sem-deficiente" style="min-width:auto">Sin confirmar</span>',
   };
 
   $('#cResultado').innerHTML = `
+    ${sinEnviar ? `<div class="msg msg-warn">La carga se detuvo por un problema de
+      conexión: quedan <strong>${n0(sinEnviar)} archivo(s) sin enviar</strong>.
+      Siguen en la lista de arriba — cuando vuelva el internet, pulsa
+      «Cargar a la base» y continúa desde donde quedó. Volver a subir algo
+      que ya entró no lo duplica.</div>` : ''}
     <div class="kpis">
       <div class="kpi"><div class="l">Archivos</div><div class="v">${n0(t.archivos)}</div>
         ${t.con_error ? `<div class="s" style="color:var(--danger)">${n0(t.con_error)} con error</div>` : ''}</div>

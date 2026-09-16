@@ -55,6 +55,8 @@ function esqueleto(cont) {
       <div class="sp"></div>
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
         <input type="checkbox" id="tAnu"> Solo inactivas</label>
+      <a class="btn btn-ghost" href="/api/administracion/trampas/excel" download
+         title="Toda la tabla, activas e inactivas">Descargar Excel</a>
       <button class="btn btn-primary" id="tNueva">Ingresar trampa</button>
     </div>
     <div id="tC"></div>

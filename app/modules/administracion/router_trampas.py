@@ -9,8 +9,13 @@ from datetime import date
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
+from datetime import date
+
+from fastapi.responses import Response
+
 from . import repository_trampas as repo
 from .router import _fila, _ids, _quien, sesion
+from ..sanidad.router import XLSX, _excel
 
 router_trampas = APIRouter(prefix="/trampas", tags=["administracion-trampas"])
 
@@ -67,6 +72,23 @@ def get_trampas(q: str | None = Query(None, description="Código de la trampa"),
             "truncado": len(filas) >= limite,
             "resumen": _fila(repo.resumen()),
             "registros": [_fila(x) for x in filas]}
+
+
+@router_trampas.get("/excel")
+def get_trampas_excel(_=Depends(sesion)):
+    """Toda la tabla de trampas: activas e inactivas, sin filtros."""
+    filas = repo.todas_para_excel()
+    columnas = [
+        ("santrampaid", "ID"), ("codigo", "CODIGO"), ("instalacion", "INSTALACION"),
+        ("x", "X"), ("y", "Y"), ("estado_txt", "ESTADO"), ("lote", "LOTE"),
+        ("agregado_por", "AGREGADO POR"), ("creado_at", "CREADO"),
+        ("corregido_por", "CORREGIDO POR"), ("corregido_at", "CORREGIDO"),
+        ("anulado_por", "ANULADO POR"), ("anulado_en", "ANULADO"), ("anulado_motivo", "MOTIVO"),
+    ]
+    contenido = _excel("trampas", columnas, filas,
+                       f"Trampas · tabla completa\nRegistros: {len(filas)} (activas e inactivas)")
+    return Response(content=contenido, media_type=XLSX,
+                    headers={"Content-Disposition": f'attachment; filename="trampas_{date.today():%Y%m%d}.xlsx"'})
 
 
 @router_trampas.get("/buscar")

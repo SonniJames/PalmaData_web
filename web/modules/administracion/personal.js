@@ -43,6 +43,8 @@ function esqueleto(cont) {
         <input type="checkbox" id="pSup"> Solo supervisores</label>
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
         <input type="checkbox" id="pAnu"> Solo anulados</label>
+      <a class="btn btn-ghost" href="/api/administracion/personal/excel" download
+         title="Toda la tabla, activos y anulados">Descargar Excel</a>
       <button class="btn btn-primary" id="pNuevo">Ingresar trabajador</button>
     </div>
     <div id="pC"></div>

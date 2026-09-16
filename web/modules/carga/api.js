@@ -17,9 +17,12 @@ async function pedir(url, opciones = {}) {
 export const API = {
   tablas: () => pedir(`${BASE}/tablas`),
   historial: (limite = 100) => pedir(`${BASE}/historial?limite=${limite}`),
-  subir: (archivos) => {
+  // De a un archivo por petición. Con internet flojo, mandar diez o quince
+  // en una sola petición significa que una caída tira todo el lote; así,
+  // cada archivo que llega queda confirmado por su cuenta.
+  subir: (archivo) => {
     const cuerpo = new FormData();
-    for (const f of archivos) cuerpo.append('archivos', f, f.name);
+    cuerpo.append('archivos', archivo, archivo.name);
     return pedir(`${BASE}/subir`, { method: 'POST', body: cuerpo });
   },
 };

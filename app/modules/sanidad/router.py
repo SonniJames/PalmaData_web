@@ -459,3 +459,10 @@ router.include_router(router_trampas)
 
 from .router_strategus import router_strategus  # noqa: E402
 router.include_router(router_strategus)
+
+
+# ============================================================
+#  MEDIDAS VEGETATIVAS
+# ============================================================
+from .router_medidas import router_medidas  # noqa: E402
+router.include_router(router_medidas)

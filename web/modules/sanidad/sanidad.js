@@ -57,6 +57,11 @@ export async function montar(cont, sub = 'revision') {
     const m = await import('./tratamientos.js');
     return m.montar(cont, sub === 'trat-descargas' ? 'descargas' : 'revision');
   }
+  // Medidas vegetativas: un solo apartado (revisión + descarga), con UMA.
+  if (String(sub || '').startsWith('medidas')) {
+    const m = await import('./medidas.js');
+    return m.montar(cont);
+  }
   // Plagas: misma pantalla sobre sanplagaslectura, con erróneos y sin duplicados.
   if (String(sub || '').startsWith('plagas')) {
     const m = await import('./plagas.js');
