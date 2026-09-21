@@ -120,6 +120,7 @@ MODULOS = [
         "submodulos": [
             {"id": "personal", "nombre": "Personal"},
             {"id": "trampas",  "nombre": "Trampas"},
+            {"id": "quimicos", "nombre": "Tratamientos · Químicos"},
         ],
     },
 ]

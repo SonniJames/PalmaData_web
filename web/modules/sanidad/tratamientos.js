@@ -310,7 +310,9 @@ function vistaRevision(c) {
             <th class="num">Línea</th><th class="num">Palma</th>
             <th>Enfermedad</th><th>Evento</th><th>Tratamiento</th>
             <th class="num">Cantidad</th><th>Trabajador</th>
-            <th>Observaciones</th>
+            <th>Equipo</th><th>Categoría</th><th>Producto</th><th>Unidad</th>
+            <th class="num">Área interv.</th><th class="num">Remisión</th>
+            <th>Observaciones</th><th>Geom</th>
             ${S.soloDuplicados ? '<th class="num">Veces</th>' : '<th>Corregido</th>'}
             <th class="num">ID único</th>
           </tr></thead>
@@ -328,7 +330,14 @@ function vistaRevision(c) {
             <td title="${esc(x.descripcion ?? '')}">${esc(x.tratamiento ?? '—')}</td>
             <td class="num">${cant(x.cantidad)}</td>
             <td>${esc(x.trabajador ?? '—')}</td>
+            <td>${esc(x.equipo ?? '—')}</td>
+            <td>${esc(x.categoria ?? '—')}</td>
+            <td>${esc(x.producto ?? '—')}</td>
+            <td>${esc(x.unidad ?? '—')}</td>
+            <td class="num">${x.area_intervenida ?? '—'}</td>
+            <td class="num">${x.remision ?? '—'}</td>
             <td style="max-width:220px">${esc(x.observaciones ?? '')}</td>
+            <td style="font-size:11.5px;white-space:nowrap">${esc(x.geom ?? '—')}</td>
             ${S.soloDuplicados
               ? `<td class="num"><span class="sem sem-bajo">${x.repeticiones}</span></td>`
               : `<td style="font-size:12.5px">${x.corregido_por
@@ -719,6 +728,13 @@ async function vistaDescargas(c) {
               <td class="num">${cant(x.cantidad)}</td>
               <td>${esc(x.evaluador ?? '—')}</td>
               <td style="max-width:200px">${esc(x.observaciones ?? '')}</td>
+              <td>${esc(x.equipo ?? '—')}</td>
+              <td>${esc(x.categoria ?? '—')}</td>
+              <td>${esc(x.producto ?? '—')}</td>
+              <td>${esc(x.unidad ?? '—')}</td>
+              <td class="num">${x.area_intervenida ?? '—'}</td>
+              <td class="num">${x.remision ?? '—'}</td>
+              <td style="font-size:11.5px;white-space:nowrap">${esc(x.geom ?? '—')}</td>
             </tr>`).join('')}</tbody>
           </table>
         </div>`;

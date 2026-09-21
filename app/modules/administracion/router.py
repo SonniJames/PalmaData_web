@@ -200,3 +200,10 @@ def get_personal_excel(_=Depends(sesion)):
 # ============================================================
 from .router_trampas import router_trampas  # noqa: E402
 router.include_router(router_trampas)
+
+
+# ============================================================
+#  TRATAMIENTOS · QUÍMICOS
+# ============================================================
+from .router_quimicos import router_quimicos  # noqa: E402
+router.include_router(router_quimicos)

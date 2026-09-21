@@ -206,6 +206,9 @@ COLUMNAS_CONSOLIDADO = [
     ("evento", "EVENTO"), ("tratamiento", "TRATAMIENTO"),
     ("descripcion", "DESCRIPCION"), ("cantidad", "CANTIDAD"),
     ("evaluador", "EVALUADOR"), ("observaciones", "OBSERVACIONES"),
+    ("equipo", "EQUIPO"), ("categoria", "CATEGORIA"), ("producto", "PRODUCTO"),
+    ("unidad", "UNIDAD"), ("area_intervenida", "AREA INTERVENIDA"),
+    ("remision", "REMISION"), ("geom", "GEOM"),
 ]
 
 

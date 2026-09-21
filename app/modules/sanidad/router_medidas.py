@@ -25,7 +25,7 @@ COLUMNAS = [
     ("prof_peciolo", "PROFUNDIDAD DE PECIOLO"), ("long_raquis", "LONGITUD DE RAQUIS"),
 ] + [(f"{t}_{n}", f"{t.upper()} {n}") for n in range(1, 9) for t in ("ancho", "largo")] + [
     ("hoja", "HOJA"), ("hojas_verdes", "HOJAS VERDES"),
-    ("latitud", "LATITUD"), ("longitud", "LONGITUD"),
+    ("latitud", "LATITUD"), ("longitud", "LONGITUD"), ("geom", "GEOM"),
 ]
 
 

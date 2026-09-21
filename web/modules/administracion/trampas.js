@@ -206,8 +206,9 @@ function vista(c) {
             <td class="num">${x.santrampaid}</td>
             <td class="ln">${esc(x.codigo ?? '—')}</td>
             <td>${fecha(x.instalacion)}</td>
-            <td class="num">${coord(x.x)}</td>
-            <td class="num">${coord(x.y)}</td>
+            <td class="num">${x.tiene_geom ? coord(x.x)
+              : '<span class="sem" style="min-width:auto;background:#f6e3c8;color:#7a5a1e" title="Sin coordenadas: corrígela para ubicarla">Sin ubicar</span>'}</td>
+            <td class="num">${x.tiene_geom ? coord(x.y) : ''}</td>
             <td>${x.activa
               ? '<span class="sem sem-optimo" style="min-width:auto">Activa</span>'
               : `<span class="sem sem-deficiente" style="min-width:auto"
@@ -336,16 +337,17 @@ function abrirModal(id) {
             : 'Solo cambia si eliges otra fecha; corregir los demás campos no la mueve.'}</div>
         </div>
         <div class="mcampo">
-          <label for="mX">Coordenada X${nueva ? req : ''}</label>
+          <label for="mX">Coordenada X</label>
           <input id="mX" inputmode="decimal" autocomplete="off"
                  ${nueva ? 'placeholder="1043210.5"' : `placeholder="${esc(reg.x ?? '')}"`}>
         </div>
         <div class="mcampo">
-          <label for="mY">Coordenada Y${nueva ? req : ''}</label>
+          <label for="mY">Coordenada Y</label>
           <input id="mY" inputmode="decimal" autocomplete="off"
                  ${nueva ? 'placeholder="1195432.8"' : `placeholder="${esc(reg.y ?? '')}"`}>
-          <div class="ayuda">Usa <strong>punto</strong> como separador decimal,
-            no coma. Las dos coordenadas van juntas.</div>
+          <div class="ayuda">Opcionales: puedes crear la trampa sin ubicación y
+            ponerla después. Si las pones, van las dos, con <strong>punto</strong>
+            decimal, no coma.</div>
         </div>
         <div class="mcampo">
           <label for="mEst">Estado${nueva ? req : ''}</label>
@@ -452,11 +454,7 @@ function abrirModal(id) {
         msg.innerHTML = `<div class="msg msg-err">Indica si la trampa está Activa o Inactiva.</div>`;
         return;
       }
-      if (!x || !y) {
-        msg.innerHTML = `<div class="msg msg-err">Las coordenadas X e Y son
-          obligatorias: con ellas se calcula la ubicación de la trampa.</div>`;
-        return;
-      }
+
     } else if (!campos.codigo && !campos.instalacion && !x && !y
                && campos.estado === '' && !loteId) {
       msg.innerHTML = `<div class="msg msg-err">No cambiaste ningún campo.</div>`;

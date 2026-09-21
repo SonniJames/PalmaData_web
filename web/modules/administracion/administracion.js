@@ -15,6 +15,10 @@ export async function montar(cont, sub = 'personal') {
     const m = await import('./trampas.js');
     return m.montar(cont);
   }
+  if (s === 'quimicos' || s.startsWith('quimicos')) {
+    const m = await import('./quimicos.js');
+    return m.montar(cont);
+  }
   cont.innerHTML = `<div class="vacio"><h3>Apartado en construcción</h3>
     <p>El apartado «${s}» del módulo Administración todavía no existe.</p></div>`;
 }

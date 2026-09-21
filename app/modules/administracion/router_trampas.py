@@ -124,8 +124,10 @@ def post_crear(datos: dict = Body(...), usuario=Depends(sesion)):
 
     x = _coordenada(datos.get("x"), "x")
     y = _coordenada(datos.get("y"), "y")
-    if x is None or y is None:
-        raise HTTPException(400, "Las coordenadas x e y son obligatorias.")
+    # Las coordenadas son opcionales, pero van juntas: una sola no ubica nada.
+    if (x is None) != (y is None):
+        raise HTTPException(400, "Si pones coordenadas, van las dos: X e Y. "
+                                 "Puedes dejar ambas vacías y ubicar la trampa después.")
 
     lote = datos.get("cat_lote_id")
     try:

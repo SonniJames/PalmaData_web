@@ -232,7 +232,7 @@ function vista(c) {
             <th class="num">Long. raquis</th>
             ${MEDIDAS.map(([, e]) => `<th class="num">${e}</th>`).join('')}
             <th class="num">Hoja</th><th class="num">Hojas verdes</th>
-            <th class="num">Latitud</th><th class="num">Longitud</th>
+            <th class="num">Latitud</th><th class="num">Longitud</th><th>Geom</th>
             <th>Estado</th><th>Corregido</th>
           </tr></thead>
           <tbody>${d.registros.map(x => `<tr data-id="${x.medidas_vegetativas_id}"
@@ -250,6 +250,7 @@ function vista(c) {
             ${MEDIDAS.map(([k]) => `<td class="num">${n1(x[k])}</td>`).join('')}
             <td class="num">${x.hoja ?? '—'}</td><td class="num">${x.hojas_verdes ?? '—'}</td>
             <td class="num">${coord(x.latitud)}</td><td class="num">${coord(x.longitud)}</td>
+            <td style="font-size:11.5px;white-space:nowrap">${esc(x.geom ?? '—')}</td>
             <td>${x.anulado
               ? `<span class="sem sem-deficiente" style="min-width:auto" title="${esc(x.anulado_motivo ?? '')}">Anulado</span>`
               : x.erroneo

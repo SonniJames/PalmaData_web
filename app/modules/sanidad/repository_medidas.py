@@ -105,7 +105,7 @@ def revision(filtros: dict, ver_anulados: bool = False,
                v.num_foliolos, v.long_peciolo, v.anch_peciolo, v.prof_peciolo,
                v.long_raquis, {", ".join("v." + m for m in MEDIDAS)},
                v.hoja, v.hojas_verdes, v.niv_foliar, v.latitud, v.longitud,
-               v.observaciones, v.erroneo, v.anulado, v.fecha_actualizacion,
+               v.observaciones, v.geom, v.erroneo, v.anulado, v.fecha_actualizacion,
                v.corregido_por, v.corregido_at, v.anulado_por, v.anulado_motivo
         FROM plantacion.v_medidas_revision v
     """ + _FILTROS

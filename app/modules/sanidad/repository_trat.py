@@ -53,8 +53,15 @@ _COLUMNAS = """
     v.corregido_por, v.corregido_at,
     v.anulado_por, v.anulado_motivo,
     v.cat_lote_id, v.san_enfermedades_id, v.san_evento_enf_id,
-    v.san_evento_trat_id, v.evaluador_codigo
+    v.san_evento_trat_id, v.evaluador_codigo,
+    x.equipo, x.categoria, x.producto, x.unidad,
+    x.area_intervenida, x.remision, x.geom
 """
+
+# Los campos nuevos (equipo, categoría, unidad, producto, área, remisión y
+# geom) viven en una vista complementaria, v_trat_extra, para no tocar
+# v_trat_revision. Se une por la clave primaria.
+_EXTRA = " LEFT JOIN plantacion.v_trat_extra x USING (san_enf_tratamiento_id)"
 
 
 def _params(f: dict) -> list:
@@ -76,7 +83,7 @@ def listar_revision(filtros: dict, ver_anulados: bool = False,
     normal. Sin filtro de fecha la vista recorrería toda la tabla, así
     que el router exige al menos uno.
     """
-    sql = f"SELECT {_COLUMNAS} FROM plantacion.v_trat_revision v" + _FILTROS
+    sql = f"SELECT {_COLUMNAS} FROM plantacion.v_trat_revision v" + _EXTRA + _FILTROS
     params = _params(filtros)
 
     sql += " AND v.anulado" if ver_anulados else " AND NOT v.anulado"
@@ -125,7 +132,7 @@ def duplicados(filtros: dict, limite: int = 1000) -> list[dict]:
                    COUNT(*) OVER (PARTITION BY v.fecha, v.lote, v.linea, v.palma)
                        AS repeticiones
             FROM plantacion.v_trat_revision v
-    """ + _FILTROS + """
+    """ + _EXTRA + _FILTROS + """
               AND NOT v.anulado
         ) d
         WHERE d.repeticiones > 1
@@ -212,8 +219,15 @@ def consolidado(fecha_desde, fecha_hasta,
                c."DESCRIPCION"    AS descripcion,
                c."CANTIDAD"       AS cantidad,
                c."EVALUADOR"      AS evaluador,
-               c."OBSERVACIONES"  AS observaciones
-        FROM plantacion.v_trat_consolidado c
+               c."OBSERVACIONES"  AS observaciones,
+               c."EQUIPO"         AS equipo,
+               c."CATEGORIA"      AS categoria,
+               c."PRODUCTO"       AS producto,
+               c."UNIDAD"         AS unidad,
+               c."AREA INTERVENIDA" AS area_intervenida,
+               c."REMISION"       AS remision,
+               c."GEOM"           AS geom
+        FROM plantacion.v_trat_consolidado_ext c
         WHERE (%s::date IS NULL OR c.fecha_filtro >= %s::date)
           AND (%s::date IS NULL OR c.fecha_filtro <= %s::date)
           AND (%s::date IS NULL OR c.actualiza_filtro >= %s::date)
