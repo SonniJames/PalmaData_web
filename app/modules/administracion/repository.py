@@ -111,3 +111,17 @@ def todos_para_excel() -> list[dict]:
         FROM plantacion.v_personal v
         ORDER BY v.activo DESC, v.nombre NULLS LAST
     """)
+
+
+# ============================================================
+#  LOTES · solo consulta
+# ============================================================
+
+def lotes_activos() -> list[dict]:
+    """Lotes con estado = 1, su sector y la geometría para el mapa."""
+    return db.fetch_all("""
+        SELECT cat_lote_id, nombre, siembra, palmas, material,
+               cat_sector_id, sector, tiene_geom, geojson
+        FROM plantacion.v_admin_lotes
+        ORDER BY sector NULLS LAST, nombre
+    """)

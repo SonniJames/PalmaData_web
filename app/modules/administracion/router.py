@@ -195,6 +195,23 @@ def get_personal_excel(_=Depends(sesion)):
                     headers={"Content-Disposition": f'attachment; filename="personal_{date.today():%Y%m%d}.xlsx"'})
 
 
+@router.get("/lotes")
+def get_lotes(_=Depends(sesion)):
+    """
+    Lotes activos con sector y polígono. Solo consulta: la pantalla los lista
+    y los dibuja; no hay nada que editar.
+    """
+    filas = repo.lotes_activos()
+    features = [{"type": "Feature",
+                 "properties": {"cat_lote_id": l["cat_lote_id"], "nombre": l["nombre"],
+                                "cat_sector_id": l["cat_sector_id"], "sector": l["sector"]},
+                 "geometry": l["geojson"]}
+                for l in filas if l["geojson"]]
+    return {"ok": True,
+            "lotes": [_fila({k: v for k, v in l.items() if k != "geojson"}) for l in filas],
+            "mapa": {"type": "FeatureCollection", "features": features}}
+
+
 # ============================================================
 #  TRAMPAS · se monta al final, cuando los ayudantes ya existen
 # ============================================================
