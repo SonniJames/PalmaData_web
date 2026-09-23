@@ -201,7 +201,14 @@ def get_lotes(_=Depends(sesion)):
     Lotes activos con sector y polígono. Solo consulta: la pantalla los lista
     y los dibuja; no hay nada que editar.
     """
-    filas = repo.lotes_activos()
+    # Sin esto, un fallo de base (vista ausente, permiso, columna que falta)
+    # sale como «Internal Server Error» en TEXTO PLANO, y el navegador solo
+    # dice «unexpected character at line 1 column 1». Mejor el motivo real.
+    try:
+        filas = repo.lotes_activos()
+    except Exception as e:
+        raise HTTPException(500, f"No se pudo leer los lotes: {str(e).split(chr(10))[0]}. "
+                                 f"Revisa que se haya ejecutado 41_admin_lotes.sql en esta base.")
     features = [{"type": "Feature",
                  "properties": {"cat_lote_id": l["cat_lote_id"], "nombre": l["nombre"],
                                 "cat_sector_id": l["cat_sector_id"], "sector": l["sector"]},

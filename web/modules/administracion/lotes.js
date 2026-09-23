@@ -48,11 +48,28 @@ export async function montar(cont) {
   cont.innerHTML = `<div class="cargando">Cargando lotes…</div>`;
   try {
     const res = await fetch('/api/administracion/lotes');
-    const j = await res.json();
-    if (!res.ok) throw new Error(j.detail || `Error ${res.status}`);
+    // La respuesta se lee como TEXTO primero. Si el servidor devuelve algo
+    // que no es JSON —«Internal Server Error» en texto plano, o una página
+    // de error del proxy—, `res.json()` reventaba con «unexpected character
+    // at line 1 column 1» y se perdía el motivo real.
+    const crudo = await res.text();
+    let j = null;
+    try { j = JSON.parse(crudo); } catch { /* no era JSON */ }
+
+    if (!res.ok || !j) {
+      const detalle = j?.detail
+        || (crudo || '').replace(/<[^>]*>/g, ' ').trim().slice(0, 300)
+        || '(respuesta vacía)';
+      throw new Error(`El servidor respondió ${res.status}: ${detalle}`);
+    }
     S.lotes = j.lotes; S.mapaGeo = j.mapa;
   } catch (e) {
-    cont.innerHTML = `<div class="msg msg-err">${esc(e.message)}</div>`;
+    cont.innerHTML = `<div class="msg msg-err">${esc(e.message)}</div>
+      <div class="msg msg-warn">Si dice «Internal Server Error», falta algo en la
+        base de datos de este servidor: lo más probable es que no se haya
+        ejecutado <strong>41_admin_lotes.sql</strong>, o que el rol de la web no
+        tenga permiso sobre <code>v_admin_lotes</code>. El detalle exacto queda
+        en el log del servicio.</div>`;
     return;
   }
   esqueleto(cont);
