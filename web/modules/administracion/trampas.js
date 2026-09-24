@@ -19,6 +19,7 @@ const S = {
   verAnuladas: false,
   seleccion: new Set(),
   datos: null,
+  mapa: null,
 };
 
 const $ = (s, c = document) => c.querySelector(s);
@@ -34,8 +35,127 @@ const COMA = /,/;
 
 // ============================================================
 export async function montar(cont) {
-  esqueleto(cont);
+  cont.innerHTML = `
+    <div class="fbar" style="padding:6px 10px">
+      <button class="btn btn-primary" id="tabLista" style="padding:7px 16px">Listado</button>
+      <button class="btn btn-ghost"   id="tabMapa"  style="padding:7px 16px">Mapa</button>
+      <div class="sp"></div>
+      <span class="sub" id="tabNota" style="margin:0"></span>
+    </div>
+    <div id="panelLista"></div>
+    <div id="panelMapa" style="display:none"></div>`;
+
+  const ver = async (cual) => {
+    const lista = cual === 'lista';
+    $('#panelLista').style.display = lista ? '' : 'none';
+    $('#panelMapa').style.display  = lista ? 'none' : '';
+    $('#tabLista').className = lista ? 'btn btn-primary' : 'btn btn-ghost';
+    $('#tabMapa').className  = lista ? 'btn btn-ghost'   : 'btn btn-primary';
+    $('#tabNota').textContent = '';
+    // El mapa se arma la primera vez que se abre: si no se usa, no se
+    // descarga ni la librería ni los polígonos.
+    if (!lista && !S.mapa) await montarMapa();
+    if (!lista && S.mapa) setTimeout(() => S.mapa.invalidateSize(), 60);
+  };
+  $('#tabLista').onclick = () => ver('lista');
+  $('#tabMapa').onclick  = () => ver('mapa');
+
+  esqueleto($('#panelLista'));
   await cargar();
+}
+
+// ============================================================
+//  PESTAÑA MAPA · lotes de fondo y trampas con su código
+//
+//  Las trampas y los lotes se guardan en metros proyectados (3116); la
+//  base los entrega ya en lat/lon, que es lo que entiende el mapa.
+// ============================================================
+const LEAFLET_CSS = '/assets/leaflet/leaflet.css';
+const LEAFLET_JS = '/assets/leaflet/leaflet.js';
+const TILES = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+
+function cargarLeaflet() {
+  if (window.L) return Promise.resolve();
+  return new Promise((ok, mal) => {
+    if (!document.querySelector(`link[href="${LEAFLET_CSS}"]`)) {
+      const css = document.createElement('link');
+      css.rel = 'stylesheet'; css.href = LEAFLET_CSS; document.head.appendChild(css);
+    }
+    const js = document.createElement('script');
+    js.src = LEAFLET_JS;
+    js.onload = () => window.L ? ok() : mal(new Error('Leaflet llegó vacío: revisa /assets/leaflet/leaflet.js'));
+    js.onerror = () => mal(new Error('No se encontró /assets/leaflet/leaflet.js en el servidor.'));
+    document.head.appendChild(js);
+  });
+}
+
+async function montarMapa() {
+  const caja = $('#panelMapa');
+  caja.innerHTML = `<div class="cargando">Cargando mapa…</div>`;
+  let datos;
+  try {
+    const res = await fetch('/api/administracion/trampas/mapa');
+    const crudo = await res.text();
+    let j = null;
+    try { j = JSON.parse(crudo); } catch { /* no era JSON */ }
+    if (!res.ok || !j) {
+      throw new Error(j?.detail
+        || (crudo || '').replace(/<[^>]*>/g, ' ').trim().slice(0, 300) || '(respuesta vacía)');
+    }
+    datos = j;
+  } catch (e) {
+    caja.innerHTML = `<div class="msg msg-err">No se pudo cargar el mapa: ${esc(e.message)}</div>`;
+    return;
+  }
+
+  const nTrampas = datos.trampas.features.length;
+  const sinUbicar = (S.datos?.resumen?.total ?? 0) - nTrampas;
+  caja.innerHTML = `
+    <div class="card" style="padding:10px">
+      <div id="tMapa"></div>
+      <p class="sub" style="margin:8px 0 0">${n0(nTrampas)} trampas sobre
+        ${n0(datos.lotes.features.length)} lotes. Las inactivas van en gris.
+        ${sinUbicar > 0 ? `<strong>${n0(sinUbicar)} trampa(s) sin coordenadas</strong>
+          no se pueden dibujar: ponles la ubicación desde el listado.` : ''}</p>
+    </div>`;
+
+  try {
+    await cargarLeaflet();
+    S.mapa = L.map($('#tMapa'), { zoomControl: true });
+    L.tileLayer(TILES, { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(S.mapa);
+
+    const lotes = L.geoJSON(datos.lotes, {
+      style: { color: '#2f6b46', weight: 1, fillColor: '#79b48f', fillOpacity: .15 },
+      onEachFeature: (f, capa) => capa.bindTooltip(f.properties.nombre,
+                                  { sticky: true, direction: 'top', className: 'lote-etiqueta' }),
+    }).addTo(S.mapa);
+
+    // Cada trampa: un punto con su código al lado, siempre visible.
+    const trampas = L.geoJSON(datos.trampas, {
+      pointToLayer: (f, latlng) => {
+        const act = f.properties.activa;
+        const color = act ? '#b45309' : '#9a9a9a';
+        const m = L.circleMarker(latlng, {
+          radius: 5, color, weight: 2, fillColor: act ? '#f59e0b' : '#cfcfcf', fillOpacity: .9,
+        });
+        m.bindTooltip(String(f.properties.codigo ?? ''), {
+          permanent: true, direction: 'right', offset: [7, 0], className: 'trampa-etiqueta',
+        });
+        m.bindPopup(`<strong>${esc(f.properties.codigo ?? '')}</strong><br>
+          Lote ${esc(f.properties.lote ?? '—')}<br>
+          Instalada ${esc(f.properties.instalacion ?? '—')}<br>
+          ${act ? 'Activa' : 'Inactiva'}`);
+        return m;
+      },
+    }).addTo(S.mapa);
+
+    const b = nTrampas ? trampas.getBounds() : lotes.getBounds();
+    if (b.isValid()) S.mapa.fitBounds(b, { padding: [20, 20] });
+    setTimeout(() => S.mapa && S.mapa.invalidateSize(), 150);
+  } catch (e) {
+    $('#tMapa').innerHTML = `<div class="msg msg-err" style="margin:14px">
+      No se pudo iniciar el mapa: ${esc(e.message)}</div>`;
+  }
 }
 
 function esqueleto(cont) {

@@ -14,7 +14,7 @@ from datetime import date
 from fastapi.responses import Response
 
 from . import repository_trampas as repo
-from .router import _fila, _ids, _quien, sesion
+from .router import _fila, _ids, _limpiar, _quien, sesion
 from ..sanidad.router import XLSX, _excel
 
 router_trampas = APIRouter(prefix="/trampas", tags=["administracion-trampas"])
@@ -72,6 +72,36 @@ def get_trampas(q: str | None = Query(None, description="Código de la trampa"),
             "truncado": len(filas) >= limite,
             "resumen": _fila(repo.resumen()),
             "registros": [_fila(x) for x in filas]}
+
+
+@router_trampas.get("/mapa")
+def get_mapa(_=Depends(sesion)):
+    """
+    Lotes y trampas en GeoJSON para la pestaña Mapa. Ambos se guardan en
+    metros proyectados y se transforman a lat/lon en la base.
+    """
+    try:
+        trampas = repo.para_mapa()
+        lotes = repo.lotes_para_mapa()
+    except Exception as e:
+        raise HTTPException(500, f"No se pudo armar el mapa: {str(e).split(chr(10))[0]}. "
+                                 f"Revisa que se hayan ejecutado 41_admin_lotes.sql y "
+                                 f"43_admin_trampas_mapa.sql en esta base.")
+    return {
+        "ok": True,
+        "lotes": {"type": "FeatureCollection",
+                  "features": [{"type": "Feature",
+                                "properties": {"cat_lote_id": l["cat_lote_id"], "nombre": l["nombre"]},
+                                "geometry": l["geojson"]} for l in lotes]},
+        "trampas": {"type": "FeatureCollection",
+                    "features": [{"type": "Feature",
+                                  "properties": {"santrampaid": t["santrampaid"],
+                                                 "codigo": t["codigo"],
+                                                 "lote": t["lote"],
+                                                 "activa": t["activa"],
+                                                 "instalacion": _limpiar(t["instalacion"])},
+                                  "geometry": t["geojson"]} for t in trampas]},
+    }
 
 
 @router_trampas.get("/excel")

@@ -119,3 +119,19 @@ def todas_para_excel() -> list[dict]:
         FROM plantacion.v_admin_trampas v
         ORDER BY v.activa DESC, v.codigo NULLS LAST
     """)
+
+
+def para_mapa() -> list[dict]:
+    """Trampas con geometría, en lat/lon. Las que no tienen no se dibujan."""
+    return db.fetch_all("""
+        SELECT santrampaid, codigo, instalacion, activa, cat_lote_id, lote, geojson
+        FROM plantacion.v_trampas_mapa ORDER BY codigo
+    """)
+
+
+def lotes_para_mapa() -> list[dict]:
+    """Los polígonos de los lotes activos, de fondo."""
+    return db.fetch_all("""
+        SELECT cat_lote_id, nombre, geojson
+        FROM plantacion.v_admin_lotes WHERE tiene_geom ORDER BY nombre
+    """)
