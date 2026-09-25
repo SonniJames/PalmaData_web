@@ -25,6 +25,22 @@ const $ = (s, c = document) => c.querySelector(s);
 const n0 = v => (v == null || isNaN(v)) ? '—' : Math.round(v).toLocaleString('es-CO');
 const n2 = (v, d = 1) => (v == null || isNaN(v)) ? '—'
   : Number(v).toLocaleString('es-CO', { minimumFractionDigits: d, maximumFractionDigits: d });
+// La celda «Productos aplicados»: un bloque por producto. Si el registro
+// es histórico (sin lista), se muestra la cantidad de la columna vieja.
+function productosHtml(x) {
+  const lista = x.productos || [];
+  if (!lista.length) {
+    return x.cantidad_historica != null
+      ? `<span class="sub" title="Registro anterior al cambio: cantidad de la columna histórica">Cantidad (histórico): ${x.cantidad_historica}</span>`
+      : '—';
+  }
+  return lista.map(p => `<div style="margin-bottom:6px;line-height:1.3">
+      <div><span class="sub">Categoría:</span> ${esc(p.categoria ?? '—')}</div>
+      <div><span class="sub">Producto:</span> <strong>${esc(p.producto ?? '—')}</strong></div>
+      <div><span class="sub">Unidad:</span> ${esc(p.unidad ?? '—')}</div>
+      <div><span class="sub">Cantidad:</span> ${p.cantidad ?? '—'}</div>
+    </div>`).join('');
+}
 const esc = t => String(t ?? '').replace(/[&<>"]/g,
   c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const hoy = () => new Date().toISOString().slice(0, 10);
@@ -309,9 +325,9 @@ function vistaRevision(c) {
             <th>Fecha</th><th class="num">Hora</th><th>Lote</th>
             <th class="num">Línea</th><th class="num">Palma</th>
             <th>Enfermedad</th><th>Evento</th><th>Tratamiento</th>
-            <th class="num">Cantidad</th><th>Trabajador</th>
-            <th>Equipo</th><th>Categoría</th><th>Producto</th><th>Unidad</th>
-            <th class="num">Área interv.</th><th class="num">Remisión</th>
+            <th>Trabajador</th><th>Equipo</th>
+            <th style="min-width:210px">Productos aplicados</th>
+            <th class="num">Área interv.</th><th>Remisión</th>
             <th>Observaciones</th><th>Geom</th>
             ${S.soloDuplicados ? '<th class="num">Veces</th>' : '<th>Corregido</th>'}
             <th class="num">ID único</th>
@@ -328,14 +344,11 @@ function vistaRevision(c) {
             <td>${esc(x.enfermedad ?? '—')}</td>
             <td>${esc(x.evento ?? '—')}</td>
             <td title="${esc(x.descripcion ?? '')}">${esc(x.tratamiento ?? '—')}</td>
-            <td class="num">${cant(x.cantidad)}</td>
             <td>${esc(x.trabajador ?? '—')}</td>
             <td>${esc(x.equipo ?? '—')}</td>
-            <td>${esc(x.categoria ?? '—')}</td>
-            <td>${esc(x.producto ?? '—')}</td>
-            <td>${esc(x.unidad ?? '—')}</td>
+            <td style="font-size:12.5px;vertical-align:top">${productosHtml(x)}</td>
             <td class="num">${x.area_intervenida ?? '—'}</td>
-            <td class="num">${x.remision ?? '—'}</td>
+            <td style="white-space:nowrap">${esc(x.remision ?? '—')}</td>
             <td style="max-width:220px">${esc(x.observaciones ?? '')}</td>
             <td style="font-size:11.5px;white-space:nowrap">${esc(x.geom ?? '—')}</td>
             ${S.soloDuplicados
@@ -708,8 +721,10 @@ async function vistaDescargas(c) {
       }
       prev.innerHTML = `
         <div class="msg msg-ok" style="margin-bottom:14px">
-          ${n0(r.total)} registros listos para descargar.
-          ${r.total > 500 ? ' Se muestran los primeros 500.' : ''}
+          ${n0(r.total)} filas listas para descargar: <strong>una por producto aplicado</strong>.
+          Un tratamiento con tres productos ocupa tres filas con el mismo REGISTRO ID;
+          la remisión va completa en todas.
+          ${r.total > 500 ? ' Se muestran las primeras 500.' : ''}
         </div>
         <div class="twrap">
           <table class="ft">
@@ -729,11 +744,12 @@ async function vistaDescargas(c) {
               <td>${esc(x.evaluador ?? '—')}</td>
               <td style="max-width:200px">${esc(x.observaciones ?? '')}</td>
               <td>${esc(x.equipo ?? '—')}</td>
+              <td class="num">${x.n_producto ?? '—'}</td>
               <td>${esc(x.categoria ?? '—')}</td>
               <td>${esc(x.producto ?? '—')}</td>
               <td>${esc(x.unidad ?? '—')}</td>
               <td class="num">${x.area_intervenida ?? '—'}</td>
-              <td class="num">${x.remision ?? '—'}</td>
+              <td style="white-space:nowrap">${esc(x.remision ?? '—')}</td>
               <td style="font-size:11.5px;white-space:nowrap">${esc(x.geom ?? '—')}</td>
             </tr>`).join('')}</tbody>
           </table>

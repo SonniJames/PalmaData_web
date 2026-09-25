@@ -54,8 +54,8 @@ _COLUMNAS = """
     v.anulado_por, v.anulado_motivo,
     v.cat_lote_id, v.san_enfermedades_id, v.san_evento_enf_id,
     v.san_evento_trat_id, v.evaluador_codigo,
-    x.equipo, x.categoria, x.producto, x.unidad,
-    x.area_intervenida, x.remision, x.geom
+    x.equipo, x.area_intervenida, x.remision, x.geom,
+    x.productos, x.n_productos, x.cantidad_historica
 """
 
 # Los campos nuevos (equipo, categoría, unidad, producto, área, remisión y
@@ -226,13 +226,14 @@ def consolidado(fecha_desde, fecha_hasta,
                c."UNIDAD"         AS unidad,
                c."AREA INTERVENIDA" AS area_intervenida,
                c."REMISION"       AS remision,
-               c."GEOM"           AS geom
+               c."GEOM"           AS geom,
+               c."N PRODUCTO"     AS n_producto
         FROM plantacion.v_trat_consolidado_ext c
         WHERE (%s::date IS NULL OR c.fecha_filtro >= %s::date)
           AND (%s::date IS NULL OR c.fecha_filtro <= %s::date)
           AND (%s::date IS NULL OR c.actualiza_filtro >= %s::date)
           AND (%s::date IS NULL OR c.actualiza_filtro <= %s::date)
-        ORDER BY c.fecha_filtro, c."LOTE", c."LINEA", c."PALMA"
+        ORDER BY c.fecha_filtro, c."LOTE", c."LINEA", c."PALMA", c."REGISTRO ID", c."N PRODUCTO"
     """, (fecha_desde, fecha_desde, fecha_hasta, fecha_hasta,
           actualiza_desde, actualiza_desde, actualiza_hasta, actualiza_hasta))
 

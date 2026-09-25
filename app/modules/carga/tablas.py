@@ -113,7 +113,11 @@ def tabla_de_archivo(nombre: str) -> tuple[str | None, str | None, int | None]:
     lo último es el número, antes la fecha, y todo lo anterior es la tabla.
     """
     base = re.sub(r"\.xlsx?$", "", nombre.strip(), flags=re.I)
-    m = re.match(r"^(?P<tabla>.+)_(?P<fecha>\d{8})_(?P<orden>\d+)$", base)
+    # Desde sep 2026 la app agrega el id del equipo al final:
+    #     tracksmoviltemp_20260924_1_12.xlsx     (12 = equipo)
+    # Ese sufijo puede ser un número o cualquier texto, y es opcional para
+    # que los archivos viejos sigan entrando igual.
+    m = re.match(r"^(?P<tabla>.+?)_(?P<fecha>\d{8})_(?P<orden>\d+)(?:_(?P<equipo>.+))?$", base)
     if m:
         return m.group("tabla").lower(), m.group("fecha"), int(m.group("orden"))
 

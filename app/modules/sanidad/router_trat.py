@@ -206,10 +206,35 @@ COLUMNAS_CONSOLIDADO = [
     ("evento", "EVENTO"), ("tratamiento", "TRATAMIENTO"),
     ("descripcion", "DESCRIPCION"), ("cantidad", "CANTIDAD"),
     ("evaluador", "EVALUADOR"), ("observaciones", "OBSERVACIONES"),
-    ("equipo", "EQUIPO"), ("categoria", "CATEGORIA"), ("producto", "PRODUCTO"),
+    ("equipo", "EQUIPO"), ("n_producto", "N PRODUCTO"),
+    ("categoria", "CATEGORIA"), ("producto", "PRODUCTO"),
     ("unidad", "UNIDAD"), ("area_intervenida", "AREA INTERVENIDA"),
     ("remision", "REMISION"), ("geom", "GEOM"),
 ]
+# Una fila por producto aplicado: REGISTRO ID agrupa las filas del mismo
+# tratamiento y N PRODUCTO las numera. CANTIDAD es la de cada producto (la
+# columna histórica solo aparece en registros sin jsonb). REMISION va
+# completa en todas las filas del registro.
+
+
+def _productos_texto(fila: dict) -> str:
+    """
+    La celda «Productos aplicados» de la revisión, en texto con saltos de
+    línea: sirve igual para la pantalla y para el Excel.
+    """
+    lista = fila.get("productos") or []
+    if not lista:
+        hist = fila.get("cantidad_historica")
+        return f"Cantidad (histórico): {hist}" if hist is not None else ""
+    bloques = []
+    for p in lista:
+        bloques.append("\n".join([
+            f"Categoría: {p.get('categoria') or '—'}",
+            f"Producto: {p.get('producto') or '—'}",
+            f"Unidad: {p.get('unidad') or '—'}",
+            f"Cantidad: {p.get('cantidad') if p.get('cantidad') is not None else '—'}",
+        ]))
+    return "\n\n".join(bloques)
 
 
 def _exigir_fecha_descarga(fd, fh, ad, ah):
@@ -326,12 +351,18 @@ def get_revision_excel(fecha_desde: date | None = Query(None),
     _exigir_fecha(f)
 
     filas = repo.listar_revision(f, ver_anulados, 10000)
+    # La misma tabla de la pantalla: un registro por fila, con los productos
+    # apilados en una celda, tal como se ven.
+    for x in filas:
+        x["productos_txt"] = _productos_texto(x)
     columnas = [("fecha", "Fecha"), ("hora", "Hora"), ("lote", "Lote"),
                 ("linea", "Linea"), ("palma", "Palma"),
                 ("enfermedad", "Enfermedad"), ("evento", "Evento"),
-                ("tratamiento", "Tratamiento"), ("cantidad", "Cantidad"),
+                ("tratamiento", "Tratamiento"),
                 ("trabajador", "Trabajador"),
-                ("observaciones", "Observaciones"),
+                ("equipo", "Equipo"), ("productos_txt", "Productos aplicados"),
+                ("area_intervenida", "Area intervenida"), ("remision", "Remision"),
+                ("observaciones", "Observaciones"), ("geom", "Geom"),
                 ("fecha_actualizacion", "Fecha actualización"),
                 ("corregido_por", "Corregido por"),
                 ("corregido_at", "Corregido el"),

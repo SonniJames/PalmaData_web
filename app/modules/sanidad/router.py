@@ -297,6 +297,14 @@ def _excel(titulo: str, columnas: list[tuple], filas: list[dict],
         ws.column_dimensions[letra].width = max(12, min(34, len(etiqueta) + 8))
     ws.freeze_panes = "A2"
 
+    # Una celda con varias líneas (por ejemplo «Productos aplicados» en
+    # tratamientos) se muestra apilada, no en una sola línea infinita.
+    for fila in ws.iter_rows(min_row=2):
+        for celda in fila:
+            if isinstance(celda.value, str) and "\n" in celda.value:
+                celda.alignment = Alignment(wrap_text=True, vertical="top")
+                ws.column_dimensions[celda.column_letter].width = 30
+
     if nota:
         guia = wb.create_sheet("filtros")
         for linea in nota.split("\n"):

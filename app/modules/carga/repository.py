@@ -40,6 +40,26 @@ def columnas_de_tabla(tabla: str) -> list[str]:
 _DEFAULT_NUMERICO = re.compile(r"^-?\d+(\.\d+)?$")
 
 
+# Tipos en los que una celda vacía ('') no es un valor: es "nada". Un ''
+# en una columna numérica, de fecha o jsonb reventaría el INSERT, y en
+# `remision` violaría su CHECK (solo dígitos y comas). Texto libre como
+# observaciones sí puede llevar '' y se respeta.
+_TIPOS_SIN_VACIO = {"jsonb", "json", "integer", "bigint", "smallint", "numeric",
+                    "double precision", "real", "date", "boolean",
+                    "timestamp without time zone", "time without time zone"}
+_COLUMNAS_SIN_VACIO = {"remision"}
+
+
+def tipos_de_tabla(tabla: str) -> dict:
+    """Tipo de dato de cada columna, para saber cómo tratar los vacíos."""
+    filas = db.fetch_all("""
+        SELECT column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'plantacion' AND table_name = %s
+    """, (tabla,))
+    return {f["column_name"]: f["data_type"] for f in filas}
+
+
 def defaults_de_tabla(tabla: str) -> dict:
     """
     El valor por defecto numérico de cada columna que lo tenga.
@@ -173,6 +193,14 @@ def insertar(tabla: str, mapa: dict[int, str], filas: list[list],
     # el DEFAULT 0 que la tabla declara, cosa que por red no pasa.
     por_defecto = defaults_de_tabla(tabla)
     rellenos = [por_defecto.get(c) for c in columnas]
+
+    # Qué columnas convierten '' en NULL. La columna `producto` de
+    # tratamientos llega como TEXTO JSON ('[{"producto_id":7,...}]'): al
+    # insertarla en una columna jsonb PostgreSQL la convierte solo; lo único
+    # que hay que evitar es mandarle '' (no es JSON válido).
+    tipos = tipos_de_tabla(tabla)
+    sin_vacio = [tipos.get(c) in _TIPOS_SIN_VACIO or c in _COLUMNAS_SIN_VACIO
+                 for c in columnas]
     destino = ", ".join(f'"{c}"' for c in columnas + list(fijos))
 
     # Si el registro pudo haber sido movido ya a otra tabla, se descartan
@@ -208,6 +236,8 @@ def insertar(tabla: str, mapa: dict[int, str], filas: list[list],
                 fila = []
                 for n_col, i in enumerate(indices):
                     valor = f[i] if i < len(f) else None
+                    if sin_vacio[n_col] and isinstance(valor, str) and valor.strip() == "":
+                        valor = None
                     if valor is None and rellenos[n_col] is not None:
                         valor = rellenos[n_col]
                     fila.append(valor)
