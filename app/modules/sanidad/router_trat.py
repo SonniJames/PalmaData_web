@@ -71,7 +71,13 @@ def get_revision(fecha_desde: date | None = Query(None),
                  actualiza_hasta, cat_lote_id, evaluador)
     _exigir_fecha(f)
 
-    filas = repo.listar_revision(f, ver_anulados, limite)
+    # Sin esto, un fallo de base (vista vieja, columna ausente) sale como
+    # «Internal Server Error» en texto plano y la pantalla no dice por qué.
+    try:
+        filas = repo.listar_revision(f, ver_anulados, limite)
+    except Exception as e:
+        raise HTTPException(500, f"No se pudo leer la revisión: {str(e).split(chr(10))[0]}. "
+                                 f"Si menciona v_trat_extra, ejecuta 44_trat_productos_jsonb.sql en esta base.")
     return {"ok": True, "filtros": {k: _limpiar(v) for k, v in f.items()},
             "total": len(filas), "limite": limite,
             "truncado": len(filas) >= limite,
@@ -228,12 +234,17 @@ def _productos_texto(fila: dict) -> str:
         return f"Cantidad (histórico): {hist}" if hist is not None else ""
     bloques = []
     for p in lista:
-        bloques.append("\n".join([
+        lineas = [
             f"Categoría: {p.get('categoria') or '—'}",
             f"Producto: {p.get('producto') or '—'}",
             f"Unidad: {p.get('unidad') or '—'}",
             f"Cantidad: {p.get('cantidad') if p.get('cantidad') is not None else '—'}",
-        ]))
+        ]
+        # La remisión es de cada producto desde sep 2026; los registros
+        # anteriores no la traen y no se inventa una línea vacía.
+        if p.get("remision"):
+            lineas.append(f"Remisión: {p['remision']}")
+        bloques.append("\n".join(lineas))
     return "\n\n".join(bloques)
 
 
@@ -361,7 +372,7 @@ def get_revision_excel(fecha_desde: date | None = Query(None),
                 ("tratamiento", "Tratamiento"),
                 ("trabajador", "Trabajador"),
                 ("equipo", "Equipo"), ("productos_txt", "Productos aplicados"),
-                ("area_intervenida", "Area intervenida"), ("remision", "Remision"),
+                ("area_intervenida", "Area intervenida"),
                 ("observaciones", "Observaciones"), ("geom", "Geom"),
                 ("fecha_actualizacion", "Fecha actualización"),
                 ("corregido_por", "Corregido por"),

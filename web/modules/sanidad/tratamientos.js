@@ -39,6 +39,7 @@ function productosHtml(x) {
       <div><span class="sub">Producto:</span> <strong>${esc(p.producto ?? '—')}</strong></div>
       <div><span class="sub">Unidad:</span> ${esc(p.unidad ?? '—')}</div>
       <div><span class="sub">Cantidad:</span> ${p.cantidad ?? '—'}</div>
+      ${p.remision ? `<div><span class="sub">Remisión:</span> ${esc(p.remision)}</div>` : ''}
     </div>`).join('');
 }
 const esc = t => String(t ?? '').replace(/[&<>"]/g,
@@ -327,7 +328,7 @@ function vistaRevision(c) {
             <th>Enfermedad</th><th>Evento</th><th>Tratamiento</th>
             <th>Trabajador</th><th>Equipo</th>
             <th style="min-width:210px">Productos aplicados</th>
-            <th class="num">Área interv.</th><th>Remisión</th>
+            <th class="num">Área interv.</th>
             <th>Observaciones</th><th>Geom</th>
             ${S.soloDuplicados ? '<th class="num">Veces</th>' : '<th>Corregido</th>'}
             <th class="num">ID único</th>
@@ -348,7 +349,6 @@ function vistaRevision(c) {
             <td>${esc(x.equipo ?? '—')}</td>
             <td style="font-size:12.5px;vertical-align:top">${productosHtml(x)}</td>
             <td class="num">${x.area_intervenida ?? '—'}</td>
-            <td style="white-space:nowrap">${esc(x.remision ?? '—')}</td>
             <td style="max-width:220px">${esc(x.observaciones ?? '')}</td>
             <td style="font-size:11.5px;white-space:nowrap">${esc(x.geom ?? '—')}</td>
             ${S.soloDuplicados
@@ -722,8 +722,8 @@ async function vistaDescargas(c) {
       prev.innerHTML = `
         <div class="msg msg-ok" style="margin-bottom:14px">
           ${n0(r.total)} filas listas para descargar: <strong>una por producto aplicado</strong>.
-          Un tratamiento con tres productos ocupa tres filas con el mismo REGISTRO ID;
-          la remisión va completa en todas.
+          Un tratamiento con tres productos ocupa tres filas con el mismo REGISTRO ID,
+          cada una con la remisión de su producto.
           ${r.total > 500 ? ' Se muestran las primeras 500.' : ''}
         </div>
         <div class="twrap">

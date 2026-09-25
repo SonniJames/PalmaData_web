@@ -54,8 +54,8 @@ _COLUMNAS = """
     v.anulado_por, v.anulado_motivo,
     v.cat_lote_id, v.san_enfermedades_id, v.san_evento_enf_id,
     v.san_evento_trat_id, v.evaluador_codigo,
-    x.equipo, x.area_intervenida, x.remision, x.geom,
-    x.productos, x.n_productos, x.cantidad_historica
+    x.equipo, x.area_intervenida, x.geom,
+    x.productos, x.n_productos, x.cantidad_historica, x.remisiones
 """
 
 # Los campos nuevos (equipo, categoría, unidad, producto, área, remisión y
