@@ -231,3 +231,10 @@ router.include_router(router_trampas)
 # ============================================================
 from .router_quimicos import router_quimicos  # noqa: E402
 router.include_router(router_quimicos)
+
+
+# ============================================================
+#  PERMISOS
+# ============================================================
+from .router_permisos import router_permisos  # noqa: E402
+router.include_router(router_permisos)

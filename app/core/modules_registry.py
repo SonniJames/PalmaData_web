@@ -122,6 +122,7 @@ MODULOS = [
             {"id": "trampas",  "nombre": "Trampas"},
             {"id": "quimicos", "nombre": "Tratamientos · Químicos"},
             {"id": "lotes",    "nombre": "Lotes"},
+            {"id": "permisos", "nombre": "Usuarios y permisos"},
         ],
     },
 ]

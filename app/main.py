@@ -20,7 +20,7 @@ import logging
 import traceback
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from .core import config, db, security
@@ -30,6 +30,38 @@ from .modules.auth.router import router as auth_router
 log = logging.getLogger("palmadata")
 
 app = FastAPI(title="PalmaData", version="1.2.0")
+
+
+# ============================================================
+#  SEGURIDAD · verificación en el servidor
+# ============================================================
+# Ocultar un módulo del menú NO es seguridad: quien conozca la dirección
+# puede llamar al endpoint igual. Aquí se comprueba cada petición a
+# /api/<modulo>/... contra los permisos del usuario, que es lo que de
+# verdad protege. El prefijo de cada router coincide con el id del módulo.
+#
+# Se dejan pasar sin comprobar: el login, los módulos del menú (que ya se
+# filtran solos) y los archivos estáticos.
+
+_RUTAS_LIBRES = ("/api/login", "/api/logout", "/api/me", "/api/modulos",
+                 "/api/estado", "/api/salud")
+
+
+@app.middleware("http")
+async def verificar_permiso(request: Request, call_next):
+    ruta = request.url.path
+    if ruta.startswith("/api/") and not ruta.startswith(_RUTAS_LIBRES):
+        partes = ruta.split("/")           # ['', 'api', '<modulo>', ...]
+        modulo = partes[2] if len(partes) > 2 else ""
+        if modulo:
+            usuario = security.usuario_actual(request)
+            if usuario and not security.puede(usuario["usuario"], modulo):
+                log.warning("Permiso denegado: %s -> %s", usuario["usuario"], ruta)
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "No tienes permiso para este módulo. "
+                                       "Pídeselo a quien administra los accesos."})
+    return await call_next(request)
 
 # --- Autenticación: es el núcleo, se carga siempre ---
 app.include_router(auth_router)
@@ -106,9 +138,19 @@ def modulos(request: Request):
     if not security.usuario_actual(request):
         return {"ok": False, "modulos": []}
 
+    quien = security.usuario_actual(request)["usuario"]
+    abierto = security.modo_abierto()
+
     salida = []
     for m in modulos_activos():
+        # Fuera del menú lo que este usuario no puede abrir. El servidor lo
+        # vuelve a comprobar en cada petición: esto es solo comodidad.
+        if not security.puede(quien, m["id"]):
+            continue
         item = dict(m)
+        if item.get("submodulos"):
+            item["submodulos"] = [s for s in item["submodulos"]
+                                  if security.puede(quien, m["id"], s["id"])]
         est = ESTADO_MODULOS.get(m["id"])
         if est is None:
             item["disponible"] = True          # modulo sin backend (ej. Inicio)
@@ -118,7 +160,7 @@ def modulos(request: Request):
                 item["error"] = est["error"]
         salida.append(item)
 
-    return {"ok": True, "modulos": salida}
+    return {"ok": True, "modulos": salida, "modo_abierto": abierto}
 
 
 # ============================================================

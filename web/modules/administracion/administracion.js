@@ -19,6 +19,10 @@ export async function montar(cont, sub = 'personal') {
     const m = await import('./quimicos.js');
     return m.montar(cont);
   }
+  if (s === 'permisos' || s.startsWith('permisos')) {
+    const m = await import('./permisos.js');
+    return m.montar(cont);
+  }
   if (s === 'lotes' || s.startsWith('lotes')) {
     const m = await import('./lotes.js');
     return m.montar(cont);
