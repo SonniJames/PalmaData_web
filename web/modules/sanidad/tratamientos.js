@@ -453,6 +453,134 @@ async function accion(tipo) {
 // ============================================================
 //  VENTANA DE CORRECCIÓN
 // ============================================================
+// ============================================================
+//  EDITOR DE PRODUCTOS APLICADOS
+//
+//  Una fila por producto: categoría, producto (filtrado por la categoría),
+//  unidad, cantidad y remisión. Devuelve la lista completa, que es lo que
+//  se guarda; no se parchea elemento por elemento.
+// ============================================================
+const PROD = {
+  filas: [], cat: null, tocado: false,
+
+  montar(caja, catalogos, productosActuales) {
+    this.cat = catalogos;
+    this.tocado = false;
+    // Se parte de lo que el registro tiene hoy. Los nombres vienen
+    // resueltos de la vista, así que se buscan sus ids en el catálogo.
+    this.filas = (productosActuales || []).map(p => {
+      const cat = (catalogos.productos || []).find(x => x.producto === p.producto);
+      const uni = (catalogos.unidades || []).find(x => x.unidad === p.unidad);
+      return {
+        categoria_producto_id: cat ? cat.categoria_producto_id : '',
+        producto_id: cat ? cat.producto_id : '',
+        unidad_aplicacion_id: uni ? uni.unidad_aplicacion_id : '',
+        cantidad: p.cantidad ?? '',
+        remision: p.remision ?? '',
+        // Si el producto ya no está activo no aparece en el catálogo:
+        // se avisa en vez de perderlo en silencio.
+        huerfano: !cat ? (p.producto || '(sin nombre)') : null,
+      };
+    });
+    this.caja = caja;
+    this.pintar();
+  },
+
+  categorias() {
+    const m = new Map();
+    for (const p of (this.cat.productos || [])) m.set(p.categoria_producto_id, p.categoria);
+    return [...m.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1])));
+  },
+
+  pintar() {
+    const est = 'padding:6px 8px;border:1.5px solid var(--line);border-radius:var(--radius-sm);font-size:13px;width:100%';
+    this.caja.innerHTML = this.filas.length ? this.filas.map((f, i) => `
+      <div class="prod-fila" data-i="${i}" style="display:grid;
+           grid-template-columns:1.1fr 1.3fr .9fr .7fr .8fr 30px;gap:6px;align-items:end;
+           margin-bottom:8px;padding:8px;background:var(--paper-2,#f7f8f6);border-radius:var(--radius-sm)">
+        <div><label class="sub" style="font-size:11px">Categoría</label>
+          <select class="pCat" style="${est}">
+            <option value="">—</option>
+            ${this.categorias().map(([id, nom]) =>
+              `<option value="${id}" ${String(f.categoria_producto_id) === String(id) ? 'selected' : ''}>${esc(nom)}</option>`).join('')}
+          </select></div>
+        <div><label class="sub" style="font-size:11px">Producto</label>
+          <select class="pProd" style="${est}">
+            <option value="">—</option>
+            ${(this.cat.productos || [])
+              .filter(p => String(p.categoria_producto_id) === String(f.categoria_producto_id))
+              .map(p => `<option value="${p.producto_id}" ${String(f.producto_id) === String(p.producto_id) ? 'selected' : ''}>${esc(p.producto)}</option>`).join('')}
+          </select></div>
+        <div><label class="sub" style="font-size:11px">Unidad</label>
+          <select class="pUni" style="${est}">
+            <option value="">—</option>
+            ${(this.cat.unidades || []).map(u =>
+              `<option value="${u.unidad_aplicacion_id}" ${String(f.unidad_aplicacion_id) === String(u.unidad_aplicacion_id) ? 'selected' : ''}>${esc(u.unidad)}</option>`).join('')}
+          </select></div>
+        <div><label class="sub" style="font-size:11px">Cantidad</label>
+          <input type="number" class="pCant" min="0" step="any" value="${f.cantidad}" style="${est}"></div>
+        <div><label class="sub" style="font-size:11px">Remisión</label>
+          <input class="pRem" inputmode="numeric" value="${esc(f.remision)}" style="${est}"></div>
+        <button class="btn btn-ghost pQuitar" title="Quitar este producto"
+                style="padding:5px 8px;height:33px">✕</button>
+        ${f.huerfano ? `<div class="sub" style="grid-column:1/-1;color:var(--danger)">
+          «${esc(f.huerfano)}» ya no está activo en el catálogo: vuelve a elegirlo o quita la fila.</div>` : ''}
+      </div>`).join('')
+      : `<p class="sub" style="margin:4px 0">Sin productos. Usa «Agregar producto».</p>`;
+
+    this.caja.querySelectorAll('.prod-fila').forEach(fila => {
+      const i = Number(fila.dataset.i);
+      const leer = () => {
+        this.filas[i].categoria_producto_id = fila.querySelector('.pCat').value;
+        this.filas[i].producto_id = fila.querySelector('.pProd').value;
+        this.filas[i].unidad_aplicacion_id = fila.querySelector('.pUni').value;
+        this.filas[i].cantidad = fila.querySelector('.pCant').value;
+        this.filas[i].remision = fila.querySelector('.pRem').value;
+        this.tocado = true;
+      };
+      fila.querySelector('.pCat').onchange = () => {
+        leer(); this.filas[i].producto_id = ''; this.filas[i].huerfano = null; this.pintar();
+      };
+      fila.querySelector('.pProd').onchange = () => { leer(); this.filas[i].huerfano = null; };
+      ['.pUni', '.pCant', '.pRem'].forEach(sel => {
+        fila.querySelector(sel).onchange = leer;
+        fila.querySelector(sel).oninput = leer;
+      });
+      fila.querySelector('.pQuitar').onclick = () => {
+        this.filas.splice(i, 1); this.tocado = true; this.pintar();
+      };
+    });
+  },
+
+  agregar() {
+    this.filas.push({ categoria_producto_id: '', producto_id: '',
+                      unidad_aplicacion_id: '', cantidad: '', remision: '', huerfano: null });
+    this.tocado = true;
+    this.pintar();
+  },
+
+  // La lista lista para guardar, o null si algo está incompleto.
+  leer() {
+    const salida = [];
+    for (const f of this.filas) {
+      if (!f.producto_id || !f.unidad_aplicacion_id || f.cantidad === '' || f.cantidad === null) return null;
+      const item = {
+        producto_id: Number(f.producto_id),
+        unidad_aplicacion_id: Number(f.unidad_aplicacion_id),
+        cantidad: Number(f.cantidad),
+      };
+      // La remisión va como número, igual que la manda la app.
+      const rem = String(f.remision ?? '').trim();
+      if (rem) {
+        if (!/^\d+$/.test(rem)) return null;
+        item.remision = Number(rem);
+      }
+      salida.push(item);
+    }
+    return salida;
+  },
+};
+
 async function abrirModal(ids) {
   if (!ids.length) return;
   const varios = ids.length > 1;
@@ -517,13 +645,33 @@ async function abrirModal(ids) {
           </select>
         </div>
         <div class="mcampo">
-          <label for="mCant">Cantidad</label>
-          <input type="number" id="mCant" min="0" step="any"
-                 placeholder="${reg.cantidad ?? ''}">
+          <label for="mArea">Área intervenida</label>
+          <input type="number" id="mArea" min="0" step="any"
+                 placeholder="${reg.area_intervenida ?? ''}">
+        </div>
+        <div class="mcampo">
+          <label for="mEquipo">Equipo de aplicación</label>
+          <select id="mEquipo">
+            <option value="">— Sin cambio —</option>
+            ${(cat.equipos || []).map(x =>
+              `<option value="${x.equipo_aplicacion_id}"
+                ${x.equipo === reg.equipo ? 'selected' : ''}>${esc(x.equipo)}</option>`).join('')}
+          </select>
         </div>
         <div class="mcampo">
           <label for="mObs">Observaciones</label>
           <input id="mObs" placeholder="${esc(reg.observaciones ?? '')}">
+        </div>
+
+        <!-- Productos aplicados: la lista completa, editable. Lo que quede
+             aquí es lo que se guarda; la cantidad y la remisión son de
+             cada producto. -->
+        <div class="mcampo" style="margin-top:6px">
+          <label>Productos aplicados</label>
+          <div id="mProductos"></div>
+          <button class="btn btn-ghost" id="mAgregarProd" style="margin-top:8px;padding:5px 12px">
+            + Agregar producto</button>
+          <div class="ayuda">Quitar todos deja el registro sin productos.</div>
         </div>`}
 
         <div id="mMsg"></div>
@@ -564,6 +712,13 @@ async function abrirModal(ids) {
   };
 
   const cerrar = () => { caja.innerHTML = ''; };
+  // El editor de productos solo aparece al editar UN registro
+  const cajaProd = $('#mProductos');
+  if (cajaProd) {
+    PROD.montar(cajaProd, cat, reg.productos);
+    $('#mAgregarProd').onclick = (e) => { e.preventDefault(); PROD.agregar(); };
+  }
+
   $('#mCancelar').onclick = cerrar;
   $('#tFondo').onclick = e => { if (e.target.id === 'tFondo') cerrar(); };
 
@@ -591,15 +746,29 @@ async function abrirModal(ids) {
         if (loteId) campos.cat_lote_id = loteId;
         const linea = $('#mLinea').value.trim();
         const palma = $('#mPalma').value.trim();
-        const cantidad = $('#mCant').value.trim();
+        const area = $('#mArea').value.trim();
         const obs = $('#mObs').value.trim();
         if (linea) campos.linea = Number(linea);
         if (palma) campos.palma = Number(palma);
         if ($('#mEnf').value) campos.san_enfermedades_id = Number($('#mEnf').value);
         if ($('#mEvt').value) campos.san_evento_enf_id = Number($('#mEvt').value);
         if ($('#mTrat').value) campos.san_evento_trat_id = Number($('#mTrat').value);
-        if (cantidad) campos.cantidad = Number(cantidad);
+        if ($('#mEquipo').value) campos.equipo_aplicacion_id = Number($('#mEquipo').value);
+        if (area) campos.area_intervenida = Number(area);
         if (obs) campos.observaciones = obs;
+
+        // Los productos van solo si se tocaron: así corregir la línea no
+        // reescribe la lista sin querer.
+        if (PROD.tocado) {
+          const lista = PROD.leer();
+          if (lista === null) {
+            msg.innerHTML = `<div class="msg msg-err">Revisa los productos: en alguna fila
+              falta el producto, la unidad o la cantidad, o la remisión no es numérica.</div>`;
+            btn.disabled = false; btn.textContent = 'Guardar cambios';
+            return;
+          }
+          campos.producto = lista;
+        }
 
         if (!Object.keys(campos).length) {
           msg.innerHTML = `<div class="msg msg-err">No cambiaste ningún campo.</div>`;

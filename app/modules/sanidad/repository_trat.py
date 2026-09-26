@@ -9,6 +9,8 @@ Las correcciones se delegan a las funciones de la base
 trat_reactivar), que validan y dejan constancia de quién cambió
 qué y cuándo en corregido_por y corregido_at.
 """
+import json
+
 from ...core import db
 
 
@@ -158,20 +160,29 @@ def corregir_lote(ids: list[int], cat_lote_id: int, usuario: str) -> int:
 
 def corregir_registro(id_registro: int, usuario: str, campos: dict) -> int:
     """
-    Corrige un registro campo a campo. Los que van en None no se tocan:
-    así se puede cambiar solo la cantidad sin pisar lo demás.
+    Corrige un registro campo a campo. Los que van en None no se tocan.
+
+    `producto` es la lista COMPLETA de productos como queda el registro
+    después de editar, no un parche: así no hay que adivinar cuál de los
+    tres cambió. Una lista vacía ([]) lo deja sin productos; None significa
+    «no toques los productos».
+
+    Ya no se manda `cantidad` suelta: cada producto trae la suya. La
+    columna se conserva intacta para el histórico.
     """
+    productos = campos.get("producto")
     with db.get_cursor() as cur:
         cur.execute("""
             SELECT plantacion.trat_corregir_registro(
                 %s, %s::text, %s::bigint, %s::integer, %s::integer,
-                %s::integer, %s::integer, %s::integer,
-                %s::double precision, %s::varchar) AS n
+                %s::integer, %s::integer, %s::integer, %s::varchar,
+                %s::jsonb, %s::numeric, %s::integer) AS n
         """, (id_registro, usuario,
-              campos.get("cat_lote_id"), campos.get("linea"),
-              campos.get("palma"), campos.get("san_enfermedades_id"),
-              campos.get("san_evento_enf_id"), campos.get("san_evento_trat_id"),
-              campos.get("cantidad"), campos.get("observaciones")))
+              campos.get("cat_lote_id"), campos.get("linea"), campos.get("palma"),
+              campos.get("san_enfermedades_id"), campos.get("san_evento_enf_id"),
+              campos.get("san_evento_trat_id"), campos.get("observaciones"),
+              json.dumps(productos) if productos is not None else None,
+              campos.get("area_intervenida"), campos.get("equipo_aplicacion_id")))
         return (cur.fetchone() or {}).get("n", 0)
 
 
@@ -256,3 +267,16 @@ def fechas_actualizacion(limite: int = 60) -> list[dict]:
         GROUP BY fecha_actualizacion
         ORDER BY fecha_actualizacion DESC LIMIT %s
     """, (limite,))
+
+
+def catalogos_productos() -> dict:
+    """Lo que necesita el modal para editar los productos aplicados."""
+    return {
+        "productos": db.fetch_all("""
+            SELECT producto_id, producto, categoria_producto_id, categoria
+            FROM plantacion.v_trat_cat_productos"""),
+        "unidades": db.fetch_all("""
+            SELECT unidad_aplicacion_id, unidad FROM plantacion.v_trat_cat_unidades"""),
+        "equipos": db.fetch_all("""
+            SELECT equipo_aplicacion_id, equipo FROM plantacion.v_trat_cat_equipos"""),
+    }

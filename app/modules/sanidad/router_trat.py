@@ -41,6 +41,9 @@ def get_catalogos(_=Depends(sesion)):
             "enfermedades": repo_censo.listar_enfermedades(),
             "eventos": repo_censo.listar_eventos(),
             "tratamientos": repo.listar_tratamientos(),
+            # Para editar los productos aplicados: solo lo activo, porque al
+            # corregir no se debe poder elegir algo que ya se retiró.
+            **repo.catalogos_productos(),
             "evaluadores": [_fila(x) for x in repo.listar_evaluadores()],
             "fechas": [_fila(x) for x in repo.fechas_disponibles()],
             "actualizaciones": [_fila(x) for x in repo.fechas_actualizacion()]}
@@ -166,12 +169,18 @@ def post_corregir(datos: dict = Body(...), usuario=Depends(sesion)):
 
     campos = {k: datos.get(k) for k in
               ("cat_lote_id", "linea", "palma", "san_enfermedades_id",
-               "san_evento_enf_id", "san_evento_trat_id", "cantidad",
-               "observaciones")}
-    if all(v in (None, "") for v in campos.values()):
+               "san_evento_enf_id", "san_evento_trat_id", "observaciones",
+               "area_intervenida", "equipo_aplicacion_id")}
+    # La lista de productos se trata aparte: [] es un cambio válido (dejarlo
+    # sin productos) y no puede confundirse con «no lo toques».
+    productos = datos.get("producto", None)
+    if productos is not None and not isinstance(productos, list):
+        raise HTTPException(400, "«producto» debe ser una lista.")
+    if productos is None and all(v in (None, "") for v in campos.values()):
         raise HTTPException(400, "No se envió ningún cambio.")
 
     campos = {k: (None if v in (None, "") else v) for k, v in campos.items()}
+    campos["producto"] = productos
 
     try:
         n = repo.corregir_registro(int(id_registro), _quien(usuario), campos)
