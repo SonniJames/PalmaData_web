@@ -59,10 +59,15 @@ function pintar(cont) {
   const d = S.datos;
   cont.innerHTML = `
     ${d.modo_abierto ? `<div class="msg msg-warn">
-      <strong>Modo abierto:</strong> todavía no hay ningún permiso definido, así que
-      <strong>todos los usuarios ven todos los módulos</strong>. En cuanto otorgues el
-      primero, manda esta tabla y quien no tenga permisos solo verá Inicio.
-      <br>Empieza por ti mismo, con Administración completa, para no quedarte fuera.
+      <strong>El sistema está abierto:</strong> todavía no hay ningún permiso definido y
+      <strong>todos los usuarios ven todos los módulos</strong>.
+      <br><br>El <strong>primer permiso</strong> que otorgues enciende el sistema: a partir
+      de ahí, quien no tenga permisos solo verá Inicio. Por eso ese primero tiene que ser
+      <strong>el tuyo</strong>, o te quedarías sin poder entrar a esta pantalla y habría que
+      destrabar el sistema desde la base de datos.
+      <br><br><button class="btn btn-primary" id="pMiLlave">
+        Darme a mí (${esc(d.yo || '')}) Administración completa</button>
+      <span class="sub" style="margin-left:10px">Después reparte el resto con calma.</span>
     </div>` : ''}
 
     <div class="kpis">
@@ -101,6 +106,16 @@ function pintar(cont) {
 
       <div class="card" style="padding:12px" id="pDetalle"></div>
     </div>`;
+
+  const llave = $('#pMiLlave');
+  if (llave) llave.onclick = async () => {
+    try {
+      await pedir(`${BASE}/otorgar`, json({ usuario: d.yo, modulo: 'administracion', apartado: null }));
+      S.datos = await pedir(BASE);
+      S.usuario = d.yo;
+      pintar(cont);
+    } catch (e) { alert(e.message); }
+  };
 
   const chk = $('#pTodos');
   if (chk) chk.onchange = e => { S.verTodos = e.target.checked; pintar(cont); };

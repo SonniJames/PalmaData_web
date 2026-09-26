@@ -43,17 +43,24 @@ app = FastAPI(title="PalmaData", version="1.2.0")
 # Se dejan pasar sin comprobar: el login, los módulos del menú (que ya se
 # filtran solos) y los archivos estáticos.
 
-_RUTAS_LIBRES = ("/api/login", "/api/logout", "/api/me", "/api/modulos",
-                 "/api/estado", "/api/salud")
+# Rutas que NO son de un módulo y por tanto no se comprueban: la sesión, el
+# menú y el estado del servidor. `auth` es la más importante: sin ella no se
+# puede ni iniciar sesión ni saber quién eres, y la web no arranca.
+#
+# La lista se compara contra el SEGMENTO de módulo (/api/<esto>/...), no
+# contra el comienzo de la ruta: así no depende de que la ruta exacta esté
+# bien escrita, solo de que el módulo no sea uno de estos.
+_MODULOS_LIBRES = {"auth", "login", "logout", "me", "modulos",
+                   "estado", "salud", "salud-bd", "health"}
 
 
 @app.middleware("http")
 async def verificar_permiso(request: Request, call_next):
     ruta = request.url.path
-    if ruta.startswith("/api/") and not ruta.startswith(_RUTAS_LIBRES):
+    if ruta.startswith("/api/"):
         partes = ruta.split("/")           # ['', 'api', '<modulo>', ...]
         modulo = partes[2] if len(partes) > 2 else ""
-        if modulo:
+        if modulo and modulo not in _MODULOS_LIBRES:
             usuario = security.usuario_actual(request)
             if usuario and not security.puede(usuario["usuario"], modulo):
                 log.warning("Permiso denegado: %s -> %s", usuario["usuario"], ruta)

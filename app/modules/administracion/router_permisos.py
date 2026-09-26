@@ -34,13 +34,14 @@ def admin_permisos(usuario=Depends(sesion)):
 
 
 @router_permisos.get("")
-def get_todo(_=Depends(admin_permisos)):
+def get_todo(usuario=Depends(admin_permisos)):
     """Usuarios, permisos y el catálogo de módulos para los desplegables."""
     catalogo = [{"id": m["id"], "nombre": m["nombre"],
                  "submodulos": [{"id": s["id"], "nombre": s["nombre"]}
                                 for s in m.get("submodulos", [])]}
                 for m in MODULOS if m["id"] != "inicio"]
     return {"ok": True,
+            "yo": _quien(usuario),          # para el botón «darme la llave»
             "modo_abierto": repo.modo_abierto(),
             "usuarios": [_fila(x) for x in repo.usuarios()],
             "permisos": [_fila(x) for x in repo.todos()],
@@ -54,6 +55,22 @@ def post_otorgar(datos: dict = Body(...), usuario=Depends(admin_permisos)):
     apartado = (datos.get("apartado") or "").strip() or None
     if not destino or not modulo:
         raise HTTPException(400, "Falta el usuario o el módulo.")
+
+    # EL PRIMER PERMISO CIERRA EL MODO ABIERTO
+    # Mientras la tabla está vacía todos entran a todo. La primera fila
+    # enciende el sistema, y si esa fila no le da Administración a quien la
+    # está creando, esa persona queda fuera de esta pantalla y ya nadie
+    # puede repartir permisos: hay que destrabarlo desde SQL.
+    # Así que el primer permiso tiene que ser el propio acceso.
+    yo = _quien(usuario)
+    if repo.modo_abierto():
+        es_mi_llave = (destino == yo and modulo == "administracion"
+                       and apartado in (None, "permisos"))
+        if not es_mi_llave:
+            raise HTTPException(400,
+                "Este sería el PRIMER permiso del sistema, y eso cierra el modo abierto. "
+                f"Antes de repartir accesos, date el tuyo: elige a «{yo}», módulo "
+                "Administración, Todo el módulo. Si no, quedarías sin poder entrar aquí.")
     try:
         n = repo.otorgar(destino, modulo, apartado, _quien(usuario))
     except Exception as e:
