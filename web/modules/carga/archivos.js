@@ -21,9 +21,17 @@ const kb = b => b < 1024 * 1024 ? `${Math.round(b / 1024)} KB`
 
 // Del nombre del archivo se saca la tabla, igual que hace el servidor.
 // Aquí solo sirve para mostrarlo antes de subir.
+//
+// El patrón DEBE coincidir con el de app/modules/carga/tablas.py. Desde
+// sep 2026 la app agrega al final el id del equipo, y a veces algo más:
+//     san_enf_lectura_20261002_2_30.xlsx
+//     san_enf_lectura_20261002_2_30_cucu.xlsx
+// El patrón viejo exigía que el nombre TERMINARA en el número de orden,
+// así que esos salían como «tabla desconocida» aquí aunque el servidor sí
+// los reconociera. El sufijo es opcional y se ignora.
 function tablaDe(nombre) {
   const base = nombre.replace(/\.xlsx?$/i, '');
-  const m = base.match(/^(.+)_(\d{8})_(\d+)$/);
+  const m = base.match(/^(.+?)_(\d{8})_(\d+)(?:_.+)?$/);
   return m ? { tabla: m[1].toLowerCase(), fecha: m[2], orden: Number(m[3]) }
            : { tabla: base.toLowerCase(), fecha: null, orden: null };
 }
