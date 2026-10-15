@@ -267,10 +267,11 @@ def post_reactivar(datos: dict = Body(...), usuario=Depends(sesion)):
 #  DESCARGAS
 # ============================================================
 
+# «Trabajador» se retiró: era la misma persona que EVALUADOR, repetida.
 COLUMNAS_CONSOLIDADO = [
     ("fecha", "Fecha"), ("hora", "Time"), ("evaluador", "EVALUADOR"),
     ("lote", "LOTE"), ("bloque", "BLOQUE"), ("linea", "LINEA"),
-    ("palma", "PALMA"), ("evento", "EVENTO"), ("trabajador", "Trabajador"),
+    ("palma", "PALMA"), ("evento", "EVENTO"),
     ("romano", "Romano"), ("observaciones", "Observaciones"),
     ("geom", "GEOM"),   # geometría en texto WKT, solo para el Excel
 ]

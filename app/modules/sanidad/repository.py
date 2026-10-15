@@ -247,7 +247,6 @@ def consolidado(fecha_desde, fecha_hasta) -> list[dict]:
                c."LINEA"          AS linea,
                c."PALMA"          AS palma,
                c."EVENTO"         AS evento,
-               c."Trabajador"     AS trabajador,
                c."Romano"         AS romano,
                c."Observaciones"  AS observaciones,
                c."GEOM"           AS geom
