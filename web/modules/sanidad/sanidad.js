@@ -697,7 +697,6 @@ async function vistaDescargas(c) {
               <td class="num">${x.linea ?? '—'}</td>
               <td class="num">${x.palma ?? '—'}</td>
               <td>${esc(x.evento ?? '—')}</td>
-              <td>${esc(x.trabajador ?? '—')}</td>
               <td>${esc(x.romano ?? '—')}</td>
               <td style="max-width:200px">${esc(x.observaciones ?? '')}</td>
               <td style="font-size:12px">${esc(x.geom ?? '')}</td>
