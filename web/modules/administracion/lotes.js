@@ -1,9 +1,12 @@
 // ============================================================
 // PalmaData · Administración · Lotes
 //
-// Solo consulta: la tabla de cat_lote (estado = 1) con su sector, y el
-// mapa de polígonos. Sin etiquetas. Al marcar lotes en la tabla o elegir
-// sectores, los polígonos correspondientes se resaltan.
+// Consulta: la tabla de cat_lote (estado = 1) con su sector, y el mapa de
+// polígonos. Sin etiquetas. Al marcar lotes en la tabla o elegir sectores,
+// los polígonos correspondientes se resaltan.
+//
+// Descarga: los polígonos (sin mapa de fondo) en KML o Shapefile. Bajan los
+// lotes seleccionados; si no hay ninguno, todos. Con o sin el nombre como etiqueta.
 //
 // El mapa es el mismo Leaflet de Recorridos, servido desde este servidor.
 // ============================================================
@@ -102,6 +105,21 @@ function esqueleto(cont) {
       <button class="btn btn-ghost" id="lLimpiar">Quitar selección</button>
     </div>
 
+    <div class="fbar" id="lDescarga">
+      <div class="g"><label for="lFormato">Descargar polígonos</label>
+        <select id="lFormato" style="${estilo}">
+          <option value="kml">KML · Google Earth</option>
+          <option value="shp">Shapefile · QGIS / ArcGIS (.zip)</option>
+        </select></div>
+      <div class="g"><label>&nbsp;</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;padding:8px 0">
+          <input type="checkbox" id="lEtiquetas" checked> Con el nombre del lote como etiqueta</label></div>
+      <div class="g"><label>&nbsp;</label>
+        <button class="btn" id="lDescargar">Descargar</button></div>
+      <div class="sp"></div>
+      <div class="sub" id="lDescargaNota" style="align-self:center;max-width:340px"></div>
+    </div>
+
     <div class="kpis">
       <div class="kpi"><div class="l">Lotes activos</div><div class="v">${n0(S.lotes.length)}</div></div>
       <div class="kpi"><div class="l">Palmas</div><div class="v">${n0(S.lotes.reduce((a, l) => a + (l.palmas || 0), 0))}</div></div>
@@ -147,6 +165,10 @@ function esqueleto(cont) {
     $('#lSec').querySelectorAll('.sec-chip').forEach(c => { c.style.background = 'var(--paper)'; c.style.borderColor = 'var(--line)'; });
     pintarTabla(); resaltar();
   };
+  $('#lDescargar').onclick = descargar;
+  $('#lFormato').onchange = actualizarDescarga;
+  actualizarDescarga();
+
   $('#lTodos').onchange = e => {
     visibles().forEach(l => e.target.checked ? S.marcados.add(l.cat_lote_id) : S.marcados.delete(l.cat_lote_id));
     pintarTabla(); resaltar();
@@ -240,4 +262,56 @@ function resaltar() {
     }
   }
   const r = $('#lResaltados'); if (r) r.textContent = n0(n);
+  actualizarDescarga();
+}
+
+// ── Descarga de polígonos ────────────────────────────────────
+// Lo que se baja son los lotes SELECCIONADOS (en la tabla o con clic en el
+// mapa). Si no hay ninguno, todos los activos. Los sectores elegidos solo
+// resaltan: no cuentan como selección.
+function actualizarDescarga() {
+  const btn = $('#lDescargar'), nota = $('#lDescargaNota');
+  if (!btn) return;
+  const n = S.marcados.size;
+  const conPoligono = S.lotes.filter(l => l.tiene_geom).length;
+  btn.textContent = n ? `Descargar ${n} lote${n === 1 ? '' : 's'} seleccionado${n === 1 ? '' : 's'}`
+                      : `Descargar todos (${n0(conPoligono)})`;
+  const shp = $('#lFormato')?.value === 'shp';
+  nota.textContent = shp
+    ? 'Shapefile en MAGNA-SIRGAS Bogotá (EPSG:3116). La etiqueta la muestra QGIS al abrir la capa; en ArcGIS se activa en Labels con el campo LOTE.'
+    : 'KML en lat/lon (WGS84), se abre directo en Google Earth.';
+}
+
+async function descargar() {
+  const btn = $('#lDescargar');
+  const p = new URLSearchParams();
+  p.append('formato', $('#lFormato').value);
+  p.append('etiquetas', $('#lEtiquetas').checked ? 'true' : 'false');
+  if (S.marcados.size) p.append('ids', [...S.marcados].join(','));
+
+  const texto = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Preparando archivo…';
+  try {
+    const res = await fetch(`/api/administracion/lotes/descarga?${p}`);
+    if (!res.ok) {
+      let d = `Error ${res.status}`;
+      try { d = (await res.json()).detail || d; } catch { /* sin JSON */ }
+      throw new Error(d);
+    }
+    const nombre = (res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1]
+      || `lotes.${$('#lFormato').value === 'shp' ? 'zip' : 'kml'}`;
+    const sinPoligono = Number(res.headers.get('X-Lotes-Sin-Poligono') || 0);
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a');
+    a.href = url; a.download = nombre;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    if (sinPoligono) {
+      $('#lDescargaNota').textContent = `${sinPoligono} de los lotes seleccionados no tienen polígono y no van en el archivo.`;
+    }
+  } catch (e) {
+    $('#lDescargaNota').innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`;
+  } finally {
+    btn.disabled = false; btn.textContent = texto;
+  }
 }
