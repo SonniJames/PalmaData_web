@@ -2,7 +2,7 @@
 // PalmaData · Módulo Administración · Punto de entrada
 //
 // Tablas maestras. Cada apartado vive en su propio archivo.
-// Por ahora: Personal. Trampas viene después.
+// Lotes se movió al módulo Mapas (Mapas · Lotes · Descarga).
 // ============================================================
 
 export async function montar(cont, sub = 'personal') {
@@ -21,10 +21,6 @@ export async function montar(cont, sub = 'personal') {
   }
   if (s === 'permisos' || s.startsWith('permisos')) {
     const m = await import('./permisos.js');
-    return m.montar(cont);
-  }
-  if (s === 'lotes' || s.startsWith('lotes')) {
-    const m = await import('./lotes.js');
     return m.montar(cont);
   }
   cont.innerHTML = `<div class="vacio"><h3>Apartado en construcción</h3>

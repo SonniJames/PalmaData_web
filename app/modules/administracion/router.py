@@ -16,7 +16,6 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 
 from ...core import security
-from . import exportar_lotes
 from . import repository as repo
 from ..sanidad.router import XLSX, _excel   # el mismo generador de Excel de toda la web
 
@@ -196,74 +195,7 @@ def get_personal_excel(_=Depends(sesion)):
                     headers={"Content-Disposition": f'attachment; filename="personal_{date.today():%Y%m%d}.xlsx"'})
 
 
-@router.get("/lotes")
-def get_lotes(_=Depends(sesion)):
-    """
-    Lotes activos con sector y polígono. Solo consulta: la pantalla los lista
-    y los dibuja; no hay nada que editar.
-    """
-    # Sin esto, un fallo de base (vista ausente, permiso, columna que falta)
-    # sale como «Internal Server Error» en TEXTO PLANO, y el navegador solo
-    # dice «unexpected character at line 1 column 1». Mejor el motivo real.
-    try:
-        filas = repo.lotes_activos()
-    except Exception as e:
-        raise HTTPException(500, f"No se pudo leer los lotes: {str(e).split(chr(10))[0]}. "
-                                 f"Revisa que se haya ejecutado 41_admin_lotes.sql en esta base.")
-    features = [{"type": "Feature",
-                 "properties": {"cat_lote_id": l["cat_lote_id"], "nombre": l["nombre"],
-                                "cat_sector_id": l["cat_sector_id"], "sector": l["sector"]},
-                 "geometry": l["geojson"]}
-                for l in filas if l["geojson"]]
-    return {"ok": True,
-            "lotes": [_fila({k: v for k, v in l.items() if k != "geojson"}) for l in filas],
-            "mapa": {"type": "FeatureCollection", "features": features}}
-
-
-@router.get("/lotes/descarga")
-def get_lotes_descarga(formato: str = Query(..., pattern="^(kml|shp)$"),
-                       ids: str | None = Query(None, description="cat_lote_id separados por coma; vacío = todos"),
-                       etiquetas: bool = Query(True),
-                       _=Depends(sesion)):
-    """
-    Descarga los polígonos de los lotes, solo los polígonos (sin mapa de fondo).
-
-    Con `ids` baja únicamente esos lotes (los seleccionados en la pantalla); sin
-    `ids`, todos los lotes activos. `etiquetas` pone el nombre del lote sobre
-    cada polígono: en KML directamente; en Shapefile con un .qml para QGIS.
-    """
-    lista: list[int] = []
-    if ids and ids.strip():
-        try:
-            lista = sorted({int(x) for x in ids.split(",") if x.strip()})
-        except ValueError:
-            raise HTTPException(400, "La lista de lotes trae identificadores inválidos.")
-
-    try:
-        filas = repo.lotes_para_descarga(lista or None)
-    except Exception as e:
-        raise HTTPException(500, f"No se pudieron leer los polígonos: {str(e).split(chr(10))[0]}")
-
-    if not filas:
-        raise HTTPException(404, "Los lotes elegidos no tienen polígono para descargar."
-                            if lista else "No hay lotes activos con polígono.")
-
-    base = (f"lotes_{len(filas)}_seleccionados" if lista else "lotes_todos") \
-        + f"_{date.today():%Y%m%d}"
-    # Cuántos de los pedidos no salen por no tener polígono (o no estar activos)
-    faltan = len(lista) - len(filas) if lista else 0
-    cabeceras = {"X-Lotes-Exportados": str(len(filas)), "X-Lotes-Sin-Poligono": str(faltan)}
-
-    if formato == "kml":
-        contenido = exportar_lotes.kml(filas, etiquetas)
-        cabeceras["Content-Disposition"] = f'attachment; filename="{base}.kml"'
-        return Response(content=contenido, media_type="application/vnd.google-earth.kml+xml",
-                        headers=cabeceras)
-
-    srid = filas[0]["srid"]
-    contenido = exportar_lotes.shp_zip(filas, etiquetas, repo.srid_wkt(srid) if srid else None)
-    cabeceras["Content-Disposition"] = f'attachment; filename="{base}_shp.zip"'
-    return Response(content=contenido, media_type="application/zip", headers=cabeceras)
+# Lotes salió de aquí: ahora es Mapas · Lotes · Descarga (app/modules/mapas).
 
 
 # ============================================================

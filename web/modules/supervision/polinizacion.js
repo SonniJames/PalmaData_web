@@ -251,7 +251,10 @@ function vista(c) {
             <th class="num">Rep. 2</th><th class="num">Enc. 2</th><th class="num">Dif. 2</th>
             <th class="num">Rep. 3</th><th class="num">Enc. 3</th><th class="num">Dif. 3</th>
             <th>Cumple</th><th>Origen</th>
-            <th class="num">Hoja sin marcar</th><th class="num">Espata sin abrir</th>
+            <th class="num">Hoja sin marcar</th>
+            <th class="num">Flor dejada 1</th><th class="num">Flor dejada 2</th>
+            <th class="num">Flor dejada 3</th>
+            <th class="num">Espata sin abrir</th>
             <th class="num">Mala cobertura</th><th class="num">Espata abierta</th>
             <th class="num">Espata parcial</th><th>Observaciones</th>
           </tr></thead>
@@ -276,6 +279,9 @@ function vista(c) {
               ${esc(x.origen_comparacion ?? '—')}${x.motivo_sin_comparar
                 ? `<br><span style="color:var(--ink-soft)">${esc(x.motivo_sin_comparar)}</span>` : ''}</td>
             <td class="num">${n1(x.hoja_sin_marcar)}</td>
+            <td class="num">${n0(x.dejada_ap1)}</td>
+            <td class="num">${n0(x.dejada_ap2)}</td>
+            <td class="num">${n0(x.dejada_ap3)}</td>
             <td class="num">${n1(x.espata_sin_abrir)}</td>
             <td class="num">${n1(x.mala_cobertura_aplicacion)}</td>
             <td class="num">${n1(x.espata_abierta)}</td>

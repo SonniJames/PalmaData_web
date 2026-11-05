@@ -94,7 +94,9 @@ def listar(filtros: dict, limite: int = 5000) -> list[dict]:
                v.encontrada_ap1, v.encontrada_ap2, v.encontrada_ap3,
                v.diferencia_ap1, v.diferencia_ap2, v.diferencia_ap3,
                v.cumple, v.origen_comparacion, v.motivo_sin_comparar,
-               v.hoja_sin_marcar, v.espata_sin_abrir, v.mala_cobertura_aplicacion,
+               v.hoja_sin_marcar,
+               v.dejada_ap1, v.dejada_ap2, v.dejada_ap3,
+               v.espata_sin_abrir, v.mala_cobertura_aplicacion,
                v.espata_abierta, v.espata_parcial,
                v.observaciones, v.fecha_actualizacion
         FROM plantacion.v_super_poli v

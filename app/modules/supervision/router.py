@@ -3,13 +3,14 @@ PalmaData · Supervisión · Cosecha lote · Endpoints
 ==================================================
 Rutas bajo /api/supervision. Todas exigen sesión.
 
-Apartado de solo consulta: la tabla que se ve es la misma que se descarga.
-Sin corrección, sin anulación, sin análisis de erróneos.
+La tabla que se ve es la misma que se descarga. Cosecha lote permite
+corregir UN registro a la vez (lote, línea, palma, ciclo, cortador,
+recolector y alistador); no hay anulación ni corrección masiva.
 """
 from datetime import date, datetime
 from io import BytesIO
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -40,7 +41,20 @@ COLUMNAS = [
     ("racimos_verdes", "RACIMOS VERDES"),
     ("racimos_sobremaduros", "RACIMOS SOBREMADUROS"),
     ("racimos_podridos", "RACIMOS PODRIDOS"),
+    ("racimomalacomo", "RAC. MAL ACOMODADO"),
+    ("pendunculolargo", "PENDUN. LARGO"),
+    ("porcentajebasura", "PORCENTAJE BASURA"),
+    ("platos_enmalezados", "PLATOS ENMALEZADOS"),
+    ("malezas_estipe", "MALEZAS ESTIPE"),
+    ("lote_inundado", "LOTE INUNDADO"),
+    ("poda_atrasada", "PODA ATRASADA"),
+    ("corregido_por", "CORREGIDO POR"),
+    ("corregido_at", "CORREGIDO EL"),
 ]
+
+# En pantalla no van la línea ni la palma (se ven en la ventana de
+# corrección). El Excel sí las trae: sale de COLUMNAS completa.
+COLUMNAS_PANTALLA = [c for c in COLUMNAS if c[0] not in ("linea", "palma")]
 
 ROLES = ("supervisor", "cortador", "recolector", "alistador")
 
@@ -50,6 +64,11 @@ def sesion(request: Request) -> dict:
     if not usuario:
         raise HTTPException(401, "Sesión no iniciada.")
     return usuario
+
+
+def _quien(usuario: dict) -> str:
+    """El username del login: es lo que queda en corregido_por."""
+    return usuario["usuario"]
 
 
 def _limpiar(v):
@@ -174,7 +193,7 @@ def get_cosecha(fecha_desde: date | None = Query(None),
     return {"ok": True, "filtros": {k: _limpiar(v) for k, v in f.items()},
             "total": len(filas), "limite": limite,
             "truncado": len(filas) >= limite,
-            "columnas": [e for _c, e in COLUMNAS],
+            "columnas": [e for _c, e in COLUMNAS_PANTALLA],
             "resumen": _fila(repo.resumen(f)),
             "registros": [_fila(x) for x in filas]}
 
@@ -214,6 +233,89 @@ def get_cosecha_excel(fecha_desde: date | None = Query(None),
                       fecha_desde or actualiza_desde, fecha_hasta or actualiza_hasta)
     return Response(content=contenido, media_type=XLSX,
                     headers={"Content-Disposition": f'attachment; filename="{archivo}"'})
+
+
+# ============================================================
+#  CORRECCIÓN DE UN REGISTRO
+# ============================================================
+
+def _entero(datos: dict, clave: str, nombre: str) -> int | None:
+    v = datos.get(clave)
+    if v in (None, ""):
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"{nombre} debe ser un número entero.")
+
+
+def _codigos(datos: dict, rol: str) -> list[int] | None:
+    """
+    None si el rol no viene (no se toca); la lista, aunque sea vacía, si
+    viene. Una lista vacía deja el rol sin nadie.
+    """
+    if rol not in datos or datos[rol] is None:
+        return None
+    lista = datos[rol]
+    if not isinstance(lista, list):
+        raise HTTPException(400, f"La lista de {rol} no es válida.")
+    try:
+        return [int(x) for x in lista]
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"Hay códigos de {rol} inválidos.")
+
+
+@router.get("/cosecha/registro/{id_registro}")
+def get_registro(id_registro: int, _=Depends(sesion)):
+    """Un registro con sus trabajadores por rol, para la ventana de corrección."""
+    fila = repo.registro(id_registro)
+    if not fila:
+        raise HTTPException(404, "El registro no existe.")
+    salida = _fila({k: v for k, v in fila.items() if k not in repo.ROLES_EDITABLES})
+    for rol in repo.ROLES_EDITABLES:
+        salida[rol] = fila[rol]
+    return {"ok": True, "registro": salida}
+
+
+@router.get("/cosecha/trabajadores")
+def get_trabajadores(q: str = Query(..., min_length=1), _=Depends(sesion)):
+    """Buscador para agregar cortadores, recolectores o alistadores."""
+    return {"ok": True, "trabajadores": repo.buscar_trabajadores(q)}
+
+
+@router.get("/cosecha/buscar-lotes")
+def get_buscar_lotes(q: str | None = Query(None, description="Nombre o número"),
+                     _=Depends(sesion)):
+    """El mismo buscador de lotes del censo."""
+    return {"ok": True, "lotes": repo.buscar_lotes(q)}
+
+
+@router.post("/cosecha/corregir")
+def post_corregir(datos: dict = Body(...), usuario=Depends(sesion)):
+    """
+    Corrige un registro. Lo que no se envía queda como estaba. Para los
+    trabajadores se manda la lista completa de códigos de ese rol, en orden.
+    """
+    id_registro = _entero(datos, "id", "El registro")
+    if not id_registro:
+        raise HTTPException(400, "Falta el registro a corregir.")
+
+    campos = {
+        "cat_lote_id": _entero(datos, "cat_lote_id", "El lote"),
+        "linea": _entero(datos, "linea", "La línea"),
+        "palma": _entero(datos, "palma", "La palma"),
+        "ciclo": _entero(datos, "ciclo", "El ciclo"),
+    }
+    for rol in repo.ROLES_EDITABLES:
+        campos[rol] = _codigos(datos, rol)
+    if all(v is None for v in campos.values()):
+        raise HTTPException(400, "No se envió ningún cambio.")
+
+    try:
+        n = repo.corregir(id_registro, _quien(usuario), campos)
+    except Exception as e:
+        raise HTTPException(400, str(e).split("\n")[0])
+    return {"ok": True, "corregidos": n}
 
 
 # ============================================================

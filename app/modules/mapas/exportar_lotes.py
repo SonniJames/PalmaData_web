@@ -1,6 +1,6 @@
 """
-PalmaData · Administración · Lotes · Exportar polígonos
-=======================================================
+PalmaData · Mapas · Lotes · Descarga · Exportar polígonos
+=========================================================
 Arma los archivos de descarga a partir de lo que entrega
 repository.lotes_para_descarga(). Aquí no hay SQL.
 
@@ -20,8 +20,6 @@ from datetime import date
 from io import BytesIO
 from xml.sax.saxutils import escape
 import zipfile
-
-import shapefile   # pyshp
 
 NOMBRE_CAPA = "lotes"
 
@@ -105,6 +103,15 @@ def _anillos(geojson: dict) -> list:
 
 
 def shp_zip(filas: list[dict], etiquetas: bool, prj: str | None) -> bytes:
+    # La librería se importa AQUÍ y no al principio del archivo: si faltara
+    # en el servidor, solo fallaría la descarga en Shapefile. Importada
+    # arriba, tumbaba el módulo completo al arrancar.
+    try:
+        import shapefile   # pyshp
+    except ImportError:
+        raise RuntimeError("Falta la librería pyshp en el servidor. Instálala con "
+                           "venv/bin/pip install pyshp==3.1.6 y reinicia palmadata_web.")
+
     shp, shx, dbf = BytesIO(), BytesIO(), BytesIO()
     w = shapefile.Writer(shp=shp, shx=shx, dbf=dbf,
                          shapeType=shapefile.POLYGON, encoding="utf-8")

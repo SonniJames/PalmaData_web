@@ -84,6 +84,17 @@ MODULOS = [
         ],
     },
     {
+        "id": "mapas",
+        "nombre": "Mapas",
+        "icono": "pin",
+        "activo": True,
+        "submodulos": [
+            {"id": "lotes",        "nombre": "Lotes · Descarga"},
+            {"id": "censo",        "nombre": "Censo"},
+            {"id": "tratamientos", "nombre": "Tratamientos"},
+        ],
+    },
+    {
         "id": "supervision",
         "nombre": "Supervisión",
         "icono": "eye",
@@ -121,7 +132,6 @@ MODULOS = [
             {"id": "personal", "nombre": "Personal"},
             {"id": "trampas",  "nombre": "Trampas"},
             {"id": "quimicos", "nombre": "Tratamientos · Químicos"},
-            {"id": "lotes",    "nombre": "Lotes"},
             {"id": "permisos", "nombre": "Usuarios y permisos"},
         ],
     },

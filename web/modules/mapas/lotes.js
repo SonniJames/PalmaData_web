@@ -1,5 +1,7 @@
 // ============================================================
-// PalmaData · Administración · Lotes
+// PalmaData · Mapas · Lotes · Descarga
+//
+// Antes estaba en Administración · Lotes; se movió tal cual a Mapas.
 //
 // Consulta: la tabla de cat_lote (estado = 1) con su sector, y el mapa de
 // polígonos. Sin etiquetas. Al marcar lotes en la tabla o elegir sectores,
@@ -50,7 +52,7 @@ function cargarLeaflet() {
 export async function montar(cont) {
   cont.innerHTML = `<div class="cargando">Cargando lotes…</div>`;
   try {
-    const res = await fetch('/api/administracion/lotes');
+    const res = await fetch('/api/mapas/lotes');
     // La respuesta se lee como TEXTO primero. Si el servidor devuelve algo
     // que no es JSON —«Internal Server Error» en texto plano, o una página
     // de error del proxy—, `res.json()` reventaba con «unexpected character
@@ -292,7 +294,7 @@ async function descargar() {
   const texto = btn.textContent;
   btn.disabled = true; btn.textContent = 'Preparando archivo…';
   try {
-    const res = await fetch(`/api/administracion/lotes/descarga?${p}`);
+    const res = await fetch(`/api/mapas/lotes/descarga?${p}`);
     if (!res.ok) {
       let d = `Error ${res.status}`;
       try { d = (await res.json()).detail || d; } catch { /* sin JSON */ }

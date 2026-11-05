@@ -1,11 +1,11 @@
 // ============================================================
 // PalmaData · Supervisión · Cosecha lote · Capa de API
-// Solo consulta y descarga: no hay corrección ni anulación.
+// Consulta, descarga y corrección de un registro a la vez.
 // ============================================================
 const BASE = '/api/supervision/cosecha';
 
-async function pedir(url) {
-  const res = await fetch(url);
+async function pedir(url, opciones = {}) {
+  const res = await fetch(url, opciones);
   let datos = null;
   try { datos = await res.json(); } catch { /* sin cuerpo JSON */ }
   if (!res.ok) {
@@ -14,6 +14,12 @@ async function pedir(url) {
   }
   return datos;
 }
+
+const json = (cuerpo) => ({
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(cuerpo),
+});
 
 const q = ({ fechaDesde, fechaHasta, actualizaDesde, actualizaHasta,
              catLoteId, supervisor, cortador, recolector, alistador } = {}) => {
@@ -34,4 +40,12 @@ export const API = {
   catalogos: () => pedir(`${BASE}/catalogos`),
   listar: (f = {}) => pedir(`${BASE}?${q(f)}`),
   urlExcel: (f = {}) => `${BASE}/excel?${q(f)}`,
+
+  // Corrección de un registro
+  registro: (id) => pedir(`${BASE}/registro/${encodeURIComponent(id)}`),
+  trabajadores: (texto) =>
+    pedir(`${BASE}/trabajadores?${new URLSearchParams({ q: texto })}`),
+  lotes: (texto) =>
+    pedir(`${BASE}/buscar-lotes?${new URLSearchParams({ q: texto || '' })}`),
+  corregir: (id, campos) => pedir(`${BASE}/corregir`, json({ id, ...campos })),
 };

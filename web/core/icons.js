@@ -32,6 +32,9 @@ export const ICONS = {
   // Mapa doblado: tres paneles con los pliegues marcados. Mismo trazo de
   // línea que los demás, sin relleno, para que no pese más en el menú.
   map:   '<path d="M9 4 3 6.5v13L9 17l6 3 6-2.5v-13L15 7Z"/><path d="M9 4v13"/><path d="M15 7v13"/>',
+  // Marcador de mapa (Mapas): una gota con un punto, distinto del plano
+  // plegado de Recorridos.
+  pin:   '<path d="M12 21s-6.5-6-6.5-11.2a6.5 6.5 0 0 1 13 0C18.5 15 12 21 12 21Z"/><circle cx="12" cy="9.8" r="2.4"/>',
 };
 
 export function iconSvg(name){

@@ -83,6 +83,7 @@ MODULOS_BACKEND = [
     "fertilizacion",
     "asistencia",
     "sanidad",
+    "mapas",
     "produccion",
     "administracion",
     "recorridos",
