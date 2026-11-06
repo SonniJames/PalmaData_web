@@ -3,8 +3,10 @@ PalmaData · Mapas · Repositorio
 ===============================
 Lotes · Descarga  (se movió desde Administración, sin cambios de fondo)
 Capas de fondo    lotes y plantación en lat/lon, para Censo y Tratamientos
-Censo             plantacion.mapa_censo_mes(año, mes)
+Censo             plantacion.mapa_censo_mes(año, mes), todos los eventos
 Tratamientos      plantacion.mapa_tratamientos_mes(año, mes)
+Plagas            plantacion.mapa_plagas_mes(año, mes)
+Excel             los consolidados de Sanidad, solo con lo que se ve en el mapa
 
 La regla de «una palma por mes, con su último registro» y el cálculo de
 los días desde el último censo viven en la base (script 52). Aquí solo se
@@ -107,12 +109,18 @@ def rango_fechas() -> dict:
 # ============================================================
 
 def censo_eventos() -> list[dict]:
-    """Los eventos del mapa de censo con su color, en el orden de la lista."""
+    """
+    TODOS los eventos del catálogo, con su enfermedad. `color` viene de
+    mapa_evento_color solo en los que tienen color fijo; los demás llegan en
+    NULL y la web les asigna uno. Primero los de color fijo, en su orden.
+    """
     return db.fetch_all("""
-        SELECT m.san_evento_enf_id AS id, e.codigo, m.color, m.orden
-        FROM plantacion.mapa_censo_evento m
-        JOIN plantacion.san_evento_enf e ON e.san_evento_enf_id = m.san_evento_enf_id
-        ORDER BY m.orden, e.codigo
+        SELECT e.san_evento_enf_id AS id, e.codigo, e.san_enfermedades_id,
+               en.nombre AS enfermedad, m.color, m.orden
+        FROM plantacion.san_evento_enf e
+        LEFT JOIN plantacion.mapa_evento_color m ON m.san_evento_enf_id = e.san_evento_enf_id
+        LEFT JOIN plantacion.san_enfermedades en ON en.san_enfermedades_id = e.san_enfermedades_id
+        ORDER BY m.orden NULLS LAST, en.nombre NULLS LAST, e.codigo
     """)
 
 
@@ -158,3 +166,109 @@ def tratamientos_mes(anio: int, mes: int) -> list[dict]:
                lon, lat, registros_mes, ultimo_censo, dias
         FROM plantacion.mapa_tratamientos_mes(%s, %s)
     """, (anio, mes))
+
+
+# ============================================================
+#  PLAGAS
+# ============================================================
+
+def plagas_rango() -> dict:
+    fila = db.fetch_one("SELECT * FROM plantacion.mapa_plagas_rango()")
+    return dict(fila) if fila else {}
+
+
+def plagas_insectos() -> list[dict]:
+    return db.fetch_all("""
+        SELECT id, insecto FROM plantacion.saninsectos ORDER BY insecto
+    """)
+
+
+def plagas_mes(anio: int, mes: int) -> list[dict]:
+    """Una fila por lectura, solo del último día evaluado de cada palma."""
+    return db.fetch_all("""
+        SELECT sanplagaslecturaid AS id, fecha, hora, cat_palma_id, lote, linea, palma,
+               insectoid, insecto, estadoinsectoid, estado, cantidad,
+               evaluador, trabajador, lon, lat, dias_mes
+        FROM plantacion.mapa_plagas_mes(%s, %s)
+    """, (anio, mes))
+
+
+# ============================================================
+#  EXCEL DE LO QUE SE VE EN EL MAPA
+#  Las mismas columnas y el mismo orden que los consolidados de Sanidad,
+#  pero solo con los registros que la web manda (los del mapa).
+# ============================================================
+
+def excel_censo(ids: list[int]) -> list[dict]:
+    return db.fetch_all("""
+        SELECT c."Fecha"          AS fecha,
+               c."Time"           AS hora,
+               c."EVALUADOR"      AS evaluador,
+               c."LOTE"           AS lote,
+               c."BLOQUE"         AS bloque,
+               c."LINEA"          AS linea,
+               c."PALMA"          AS palma,
+               c."EVENTO"         AS evento,
+               c."Romano"         AS romano,
+               c."Observaciones"  AS observaciones,
+               c."GEOM"           AS geom
+        FROM plantacion.v_censo_consolidado c
+        WHERE c.registro_id = ANY(%s)
+        ORDER BY c.fecha_filtro, c."LOTE", c."LINEA", c."PALMA"
+    """, (ids,))
+
+
+def excel_tratamientos(ids: list[int]) -> list[dict]:
+    return db.fetch_all("""
+        SELECT c."REGISTRO ID"    AS registro_id,
+               c."FECHA"          AS fecha,
+               c."HORA"           AS hora,
+               c."LOTE"           AS lote,
+               c."LINEA"          AS linea,
+               c."PALMA"          AS palma,
+               c."PALMA ID"       AS palma_id,
+               c."ENFERMEDAD"     AS enfermedad,
+               c."EVENTO"         AS evento,
+               c."TRATAMIENTO"    AS tratamiento,
+               c."DESCRIPCION"    AS descripcion,
+               c."CANTIDAD"       AS cantidad,
+               c."EVALUADOR"      AS evaluador,
+               c."OBSERVACIONES"  AS observaciones,
+               c."EQUIPO"         AS equipo,
+               c."CATEGORIA"      AS categoria,
+               c."PRODUCTO"       AS producto,
+               c."UNIDAD"         AS unidad,
+               c."AREA INTERVENIDA" AS area_intervenida,
+               c."REMISION"       AS remision,
+               c."GEOM"           AS geom,
+               c."N PRODUCTO"     AS n_producto
+        FROM plantacion.v_trat_consolidado_ext c
+        WHERE c."REGISTRO ID" = ANY(%s)
+        ORDER BY c.fecha_filtro, c."LOTE", c."LINEA", c."PALMA", c."REGISTRO ID", c."N PRODUCTO"
+    """, (ids,))
+
+
+def excel_plagas(ids: list[int]) -> list[dict]:
+    return db.fetch_all("""
+        SELECT c."LECTURA"        AS lectura,
+               c."FECHA"          AS fecha,
+               c."HORA"           AS hora,
+               c."LOTE"           AS lote,
+               c."LINEA"          AS linea,
+               c."PALMA"          AS palma,
+               c."INSECTO"        AS insecto,
+               c."ESTADO"         AS estado,
+               c."CANTIDAD"       AS cantidad,
+               c."NIVEL FOLIAR"   AS nivfoliar,
+               c."HOJA 5"         AS defol5,
+               c."HOJA 13"        AS defol13,
+               c."HOJA 21"        AS defol21,
+               c."HOJA 29"        AS defol29,
+               c."HOJA 37"        AS defol37,
+               c."EVALUADOR"      AS evaluador,
+               c."OBSERVACIONES"  AS observaciones,
+               c."GEOM"           AS geom
+        FROM plantacion.v_plagas_consolidado c
+        WHERE c.registro_id = ANY(%s)
+        ORDER BY c.fecha_filtro, c."LOTE", c."LINEA", c."PALMA", c."HORA"
+    """, (ids,))

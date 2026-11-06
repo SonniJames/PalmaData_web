@@ -92,6 +92,7 @@ MODULOS = [
             {"id": "lotes",        "nombre": "Lotes · Descarga"},
             {"id": "censo",        "nombre": "Censo"},
             {"id": "tratamientos", "nombre": "Tratamientos"},
+            {"id": "plagas",       "nombre": "Plagas"},
         ],
     },
     {

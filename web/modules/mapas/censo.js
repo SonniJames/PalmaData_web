@@ -1,7 +1,7 @@
 // ============================================================
 // PalmaData · Mapas · Censo
 //
-// Las palmas del censo de PC de UN mes, sobre los lotes. Cada palma sale
+// Las palmas del censo de UN mes (todos los eventos), sobre los lotes. Cada palma sale
 // una sola vez: con su última clasificación del mes (eso lo resuelve la
 // base, plantacion.mapa_censo_mes). La ubicación es la de la palma en
 // cat_palma, no la del celular.
@@ -11,17 +11,31 @@
 // Sin eventos marcados no se dibuja nada; sin trabajadores marcados, todos.
 // ============================================================
 import { API } from './api.js';
-import { $, n0, esc, MESES, crearMapa, botonEncuadrar, leyenda, multiselect, selectorMes } from './comun.js';
+import { $, n0, esc, MESES, crearMapa, botonEncuadrar, leyenda, multiselect, selectorMes,
+         botonExcel, textoFiltro } from './comun.js';
 
 const S = {
   anio: null, mes: null,
-  eventos: [],              // [{id, codigo, color, orden}]
+  eventos: [],              // [{id, codigo, enfermedad, color}] · todos los del catálogo
   datos: null,              // respuesta del mes
   filas: [],                // palmas del mes como objetos
   selEv: new Set(), selTr: new Set(),
   msEv: null, msTr: null,
   mapa: null, lienzo: null, capa: null, ley: null,
 };
+
+// Colores para los eventos sin color fijo en mapa_evento_color. Se saltan
+// los que ya usa algún evento fijo, para que no se confundan.
+const PALETA = ['#2ca02c', '#e377c2', '#7f7f7f', '#bcbd22', '#393b79', '#ad494a',
+  '#5254a3', '#8c6d31', '#843c39', '#7b4173', '#3182bd', '#e6550d', '#31a354',
+  '#756bb1', '#636363', '#fd8d3c', '#9e9ac8', '#6baed6', '#74c476', '#a55194'];
+
+function asignarColores() {
+  const usados = new Set(S.eventos.filter(e => e.color).map(e => e.color.toLowerCase()));
+  const libres = PALETA.filter(c => !usados.has(c));
+  let i = 0;
+  for (const e of S.eventos) if (!e.color) e.color = libres[i++ % libres.length];
+}
 
 const colorDe = id => (S.eventos.find(e => e.id === id) || {}).color || '#555';
 const nombreEv = id => (S.eventos.find(e => e.id === id) || {}).codigo || `Evento ${id}`;
@@ -37,6 +51,7 @@ export async function montar(cont) {
     return;
   }
   S.eventos = cat.eventos || [];
+  asignarColores();
   esqueleto(cont);
 
   const r = cat.rango || {};
@@ -45,10 +60,10 @@ export async function montar(cont) {
   else { $('#cAnio').value = S.anio; $('#cMes').value = S.mes; }
 
   S.msEv = multiselect($('#cEv'), {
-    vacio: 'Elige uno o varios…',
+    vacio: 'Elige uno o varios…', buscador: true,
     onChange: v => { S.selEv = v; pintar(); },
   });
-  S.msEv.opciones(S.eventos.map(e => ({ id: e.id, texto: e.codigo, color: e.color })));
+  S.msEv.opciones(opcionesEventos(new Map()));
   S.msTr = multiselect($('#cTr'), {
     vacio: 'Todos', buscador: true,
     onChange: v => { S.selTr = v; pintar(); },
@@ -58,6 +73,20 @@ export async function montar(cont) {
     S.anio = Number($('#cAnio').value); S.mes = Number($('#cMes').value);
     cargarMes();
   };
+
+  // Excel: las palmas que pasan los filtros (también las que no tienen
+  // ubicación y por eso no se dibujan), con las columnas del consolidado.
+  botonExcel($('#cExcel'), 'censo', () => ({ anio: S.anio, mes: S.mes }), () => {
+    const lista = filtradas();
+    const trab = S.datos?.trabajadores || {};
+    return {
+      ids: lista.map(f => f.id),
+      filtros: [
+        textoFiltro('Eventos', S.eventos.filter(e => S.selEv.has(e.id)).map(e => e.codigo), 'ninguno'),
+        textoFiltro('Trabajador', [...S.selTr].map(id => trab[id] || `(${id})`), 'todos'),
+      ],
+    };
+  }, t => { $('#cAviso').innerHTML = `<div class="msg msg-err">${esc(t)}</div>`; });
   $('#cAnio').onchange = cambioMes;
   $('#cMes').onchange = cambioMes;
 
@@ -83,6 +112,7 @@ function esqueleto(cont) {
       <div class="g"><label>Trabajador</label><div id="cTr" style="min-width:230px"></div></div>
       <div class="sp"></div>
       <span class="sub" id="cEstado" style="margin:0"></span>
+      <button class="btn btn-ghost" id="cExcel" title="El consolidado del censo, solo con lo que se ve en el mapa">⬇ Excel</button>
     </div>
     <div id="cAviso"></div>
     <div class="kpis" id="cKpis"></div>
@@ -125,14 +155,22 @@ async function cargarMes() {
   // Cuántas palmas tiene cada evento en el mes, junto al nombre
   const porEv = new Map();
   for (const f of S.filas) porEv.set(f.evento, (porEv.get(f.evento) || 0) + 1);
-  S.msEv.opciones(S.eventos.map(e => ({ id: e.id, texto: e.codigo, color: e.color, n: porEv.get(e.id) || 0 })));
+  S.msEv.opciones(opcionesEventos(porEv));
 
-  estado.textContent = `${MESES[S.mes - 1]} ${S.anio}: ${n0(S.filas.length)} palmas censadas con estos eventos`;
+  estado.textContent = `${MESES[S.mes - 1]} ${S.anio}: ${n0(S.filas.length)} palmas censadas`;
   if (!S.filas.length) {
-    $('#cAviso').innerHTML = `<div class="msg msg-warn">No hay registros de estos eventos en
+    $('#cAviso').innerHTML = `<div class="msg msg-warn">No hay registros de censo en
       ${MESES[S.mes - 1]} de ${S.anio}. Prueba con otro mes.</div>`;
   }
   pintar();
+}
+
+// Todos los eventos del catálogo; primero los que tienen palmas en el mes.
+// La enfermedad va al lado porque hay eventos de varias.
+function opcionesEventos(porEv) {
+  const lista = S.eventos.map(e => ({ id: e.id, texto: e.codigo, color: e.color,
+    nota: e.enfermedad || '', n: porEv.get(e.id) || 0 }));
+  return [...lista.filter(o => o.n), ...lista.filter(o => !o.n)];
 }
 
 function filtradas() {
@@ -148,7 +186,9 @@ function pintar() {
   // ── Tarjetas: total y una por evento elegido ──
   const porEv = new Map();
   for (const f of conPunto) porEv.set(f.evento, (porEv.get(f.evento) || 0) + 1);
-  const elegidos = S.eventos.filter(e => S.selEv.has(e.id));
+  // Tarjetas y leyenda solo para los eventos marcados que tienen palmas:
+  // con «Marcar todos» no se llena la pantalla de ceros.
+  const elegidos = S.eventos.filter(e => S.selEv.has(e.id) && porEv.get(e.id));
   $('#cKpis').innerHTML = !S.selEv.size
     ? `<div class="kpi"><div class="l">Palmas en el mapa</div><div class="v">0</div>
          <div class="s">Elige uno o varios eventos</div></div>`

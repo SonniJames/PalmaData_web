@@ -4,6 +4,7 @@
 //   lotes         Lotes · Descarga (antes en Administración)
 //   censo         palmas del censo de PC del mes, por evento
 //   tratamientos  palmas tratadas en el mes, con los días desde el censo
+//   plagas        mapa de calor de la cantidad de insectos del mes
 // ============================================================
 export async function montar(cont, sub = 'lotes') {
   const s = String(sub || 'lotes');
@@ -13,6 +14,10 @@ export async function montar(cont, sub = 'lotes') {
   }
   if (s === 'censo' || s.startsWith('censo')) {
     const m = await import('./censo.js');
+    return m.montar(cont);
+  }
+  if (s === 'plagas' || s.startsWith('plaga')) {
+    const m = await import('./plagas.js');
     return m.montar(cont);
   }
   if (s === 'tratamientos' || s.startsWith('trat')) {

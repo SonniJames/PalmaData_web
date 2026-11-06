@@ -6,7 +6,7 @@
 //   multiselect()     lista desplegable con casillas (uno o varios)
 //   selectorMes()     año y mes: estos mapas se analizan mes a mes
 // ============================================================
-import { API } from './api.js';
+import { API, bajarExcel } from './api.js';
 
 export const $ = (s, c = document) => c.querySelector(s);
 export const n0 = v => (v == null || isNaN(v)) ? '—' : Math.round(v).toLocaleString('es-CO');
@@ -49,9 +49,11 @@ let capasFondo = null;
  * Crea el mapa en `caja` con la plantación y los lotes de fondo.
  * Lotes y palmas se dibujan sobre el MISMO lienzo: así, al pasar el mouse,
  * la palma que está encima gana y, fuera de las palmas, sale el lote.
- * Devuelve { mapa, lienzo, encuadre } o lanza un error con el motivo.
+ * `relleno` es la opacidad del relleno de los lotes (Plagas usa 0 para que
+ * el mapa de calor se vea limpio debajo de los bordes).
+ * Devuelve { mapa, lienzo, encuadre, lotes } o lanza un error con el motivo.
  */
-export async function crearMapa(caja, avisar = () => {}) {
+export async function crearMapa(caja, avisar = () => {}, { relleno = .12 } = {}) {
   await cargarLeaflet();
   if (!capasFondo) capasFondo = await API.capas();
 
@@ -83,7 +85,7 @@ export async function crearMapa(caja, avisar = () => {}) {
   if (lotes && lotes.features && lotes.features.length) {
     const capa = L.geoJSON(lotes, {
       renderer: lienzo,
-      style: { color: '#2f6b46', weight: 1, fillColor: '#79b48f', fillOpacity: .12 },
+      style: { color: '#2f6b46', weight: 1, fillColor: '#79b48f', fillOpacity: relleno },
       onEachFeature: (f, c) => c.bindTooltip(esc(f.properties.nombre),
         { sticky: true, direction: 'top', className: 'mp-lote', offset: [0, -6] }),
     }).addTo(mapa);
@@ -93,7 +95,7 @@ export async function crearMapa(caja, avisar = () => {}) {
   }
   if (encuadre && encuadre.isValid()) mapa.fitBounds(encuadre, { padding: [10, 10] });
 
-  return { mapa, lienzo, encuadre };
+  return { mapa, lienzo, encuadre, lotes: capasFondo.lotes };
 }
 
 /** Botón del mapa para encuadrar lo que se está viendo. */
@@ -270,3 +272,29 @@ export function selectorMes(selAnio, selMes, desde, hasta) {
   return { anio: fin.getFullYear(), mes: fin.getMonth() + 1 };
 }
 
+
+/**
+ * Conecta un botón de «Descargar Excel». `pedido()` devuelve
+ * { ids, filtros } con lo que se ve en el mapa en ese momento, o null si
+ * no hay nada.
+ */
+export function botonExcel(boton, que, obtenerMes, pedido, avisar) {
+  boton.onclick = async () => {
+    const p = pedido();
+    if (!p || !p.ids.length) { avisar('No hay registros en el mapa para descargar.'); return; }
+    const texto = boton.textContent;
+    boton.disabled = true; boton.textContent = 'Preparando…';
+    try {
+      await bajarExcel(que, { ...obtenerMes(), ids: p.ids, filtros: p.filtros });
+    } catch (e) {
+      avisar(e.message);
+    } finally {
+      boton.disabled = false; boton.textContent = texto;
+    }
+  };
+}
+
+/** «Eventos: A, B, C» para la hoja de filtros del Excel. */
+export function textoFiltro(titulo, nombres, vacio) {
+  return `${titulo}: ${nombres.length ? nombres.join(', ') : vacio}`;
+}

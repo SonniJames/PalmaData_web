@@ -17,7 +17,8 @@
 // El mes se pide completo una vez; los filtros se aplican aquí.
 // ============================================================
 import { API } from './api.js';
-import { $, n0, n1, esc, MESES, crearMapa, botonEncuadrar, leyenda, multiselect, selectorMes } from './comun.js';
+import { $, n0, n1, esc, MESES, crearMapa, botonEncuadrar, leyenda, multiselect, selectorMes,
+         botonExcel, textoFiltro } from './comun.js';
 
 const PALETA = ['#d62728', '#1f77b4', '#ff7f0e', '#9467bd', '#17becf', '#8c564b',
                 '#e377c2', '#f2c500', '#111111', '#7f7f7f', '#bcbd22', '#393b79'];
@@ -82,6 +83,22 @@ export async function montar(cont) {
     S.anio = Number($('#tAnio').value); S.mes = Number($('#tMes').value);
     cargarMes();
   };
+
+  botonExcel($('#tExcel'), 'tratamientos', () => ({ anio: S.anio, mes: S.mes }), () => {
+    const trab = S.datos?.trabajadores || {};
+    const nombres = (sel, cat, campo) => cat.filter(x => sel.has(x.id)).map(x => x[campo]);
+    return {
+      ids: filtradas().map(f => f.id),
+      filtros: [
+        textoFiltro('Tratamiento', nombres(S.sel.trat, S.cat.tratamientos, 'codigo'), 'ninguno'),
+        textoFiltro('Enfermedad', nombres(S.sel.enf, S.cat.enfermedades, 'nombre'), 'todas'),
+        textoFiltro('Evento', nombres(S.sel.ev, S.cat.eventos, 'codigo'), 'todos'),
+        textoFiltro('Trabajador', [...S.sel.tr].map(id => trab[id] || `(${id})`), 'todos'),
+        textoFiltro('Días del censo al tratamiento',
+                    RANGOS.filter(r => S.sel.dias.has(r.id)).map(r => r.texto), 'todos'),
+      ],
+    };
+  }, t => { $('#tAviso').innerHTML = `<div class="msg msg-err">${esc(t)}</div>`; });
   $('#tAnio').onchange = cambioMes;
   $('#tMes').onchange = cambioMes;
 
@@ -112,6 +129,7 @@ function esqueleto(cont) {
       <div class="g"><label>Días del censo al tratamiento</label><div id="tDias" style="min-width:190px"></div></div>
       <div class="sp"></div>
       <span class="sub" id="tEstado" style="margin:0"></span>
+      <button class="btn btn-ghost" id="tExcel" title="El consolidado de tratamientos, solo con lo que se ve en el mapa">⬇ Excel</button>
     </div>
     <div id="tAviso"></div>
     <div class="kpis" id="tKpis"></div>
@@ -186,6 +204,14 @@ async function cargarMes() {
 
 // Todos los filtros menos el de días: con esto se cuentan las palmas de
 // cada rango, para que la lista de días diga cuántas hay en cada uno.
+// Lo que pasa TODOS los filtros, días incluidos (lo que se ve en el mapa,
+// más las palmas sin ubicación que no se pueden dibujar).
+function filtradas() {
+  const base = sinFiltroDias();
+  const rangos = RANGOS.filter(r => S.sel.dias.has(r.id));
+  return rangos.length ? base.filter(f => rangos.some(r => r.ok(f.dias))) : base;
+}
+
 function sinFiltroDias() {
   if (!S.sel.trat.size) return [];
   return S.filas.filter(f =>

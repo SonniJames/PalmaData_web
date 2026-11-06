@@ -7,6 +7,9 @@ Rutas bajo /api/mapas. Todas exigen sesión.
   Capas de fondo     /capas                    lotes y plantación
   Censo              /censo/catalogos, /censo/puntos?anio=&mes=
   Tratamientos       /tratamientos/catalogos, /tratamientos/puntos?anio=&mes=
+  Plagas             /plagas/catalogos, /plagas/puntos?anio=&mes=
+  Excel              POST /censo/excel, /tratamientos/excel, /plagas/excel
+                     con los ids de lo que se ve en el mapa
 
 Censo y Tratamientos devuelven TODAS las palmas del mes (ya con una fila
 por palma) y la web filtra en el navegador: así marcar o desmarcar un
@@ -20,12 +23,17 @@ import gzip
 import json
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 
 from ...core import security
 from . import exportar_lotes
 from . import repository as repo
+# El mismo generador de Excel y las mismas columnas de los consolidados de
+# Sanidad: el archivo sale idéntico, solo cambia qué registros trae.
+from ..sanidad.router import XLSX, _excel, COLUMNAS_CONSOLIDADO as COL_CENSO
+from ..sanidad.router_trat import COLUMNAS_CONSOLIDADO as COL_TRAT
+from ..sanidad.router_plagas import COLUMNAS_CONSOLIDADO as COL_PLAGAS
 
 router = APIRouter(prefix="/api/mapas", tags=["mapas"])
 
@@ -204,7 +212,7 @@ def get_censo_catalogos(_=Depends(sesion)):
     try:
         eventos = repo.censo_eventos()
     except Exception as e:
-        raise HTTPException(500, f"No se pudieron leer los eventos del mapa: {str(e).splitlines()[0]}. "
+        raise HTTPException(500, f"No se pudieron leer los eventos: {str(e).splitlines()[0]}. "
                                  "Revisa que se haya ejecutado 52_mapas.sql en esta base.")
     return {"ok": True, "eventos": [_fila(x) for x in eventos], "rango": _rango()}
 
@@ -214,7 +222,8 @@ def get_censo_puntos(request: Request,
                      anio: int = Query(...), mes: int = Query(...),
                      _=Depends(sesion)):
     """
-    El censo del mes, una fila por palma (su última clasificación del mes).
+    El censo del mes, todos los eventos, una fila por palma (su última
+    clasificación del mes).
     Cada palma: [id, fecha, hora, lote, linea, palma, enfermedad_id,
     evento_id, trabajador_id, lon, lat, registros_mes]. Los nombres van una
     sola vez en los diccionarios.
@@ -275,3 +284,117 @@ def get_trat_puntos(request: Request,
                   for f in filas],
     }
     return _json(request, datos)
+
+
+# ============================================================
+#  PLAGAS
+# ============================================================
+
+PLAGAS_CAMPOS = ["id", "fecha", "palma_id", "lote", "linea", "palma", "insecto",
+                 "cantidad", "trabajador", "lon", "lat", "dias_mes"]
+
+
+@router.get("/plagas/catalogos")
+def get_plagas_catalogos(_=Depends(sesion)):
+    try:
+        rango = _fila(repo.plagas_rango())
+    except Exception as e:
+        raise HTTPException(500, f"No se pudo leer el rango de fechas: {str(e).splitlines()[0]}. "
+                                 "Revisa que se haya ejecutado 54_mapas_plagas_excel.sql en esta base.")
+    return {"ok": True, "rango": rango,
+            "insectos": [_fila(x) for x in repo.plagas_insectos()]}
+
+
+@router.get("/plagas/puntos")
+def get_plagas_puntos(request: Request,
+                      anio: int = Query(...), mes: int = Query(...),
+                      _=Depends(sesion)):
+    """
+    Las lecturas del mes (último día evaluado de cada palma), una por
+    insecto: [id, fecha, palma_id, lote, linea, palma, insecto_id, cantidad,
+    trabajador_id, lon, lat, dias_mes]. La web suma por palma según los
+    insectos elegidos y arma el mapa de calor.
+    """
+    _mes(anio, mes)
+    filas = repo.plagas_mes(anio, mes)
+    datos = {
+        "ok": True, "anio": anio, "mes": mes, "campos": PLAGAS_CAMPOS,
+        "total": len(filas),
+        "trabajadores": _nombres(filas, "evaluador", "trabajador"),
+        "filas": [[f["id"], _limpiar(f["fecha"]), f["cat_palma_id"], f["lote"],
+                   f["linea"], f["palma"], f["insectoid"],
+                   _limpiar(f["cantidad"]) if f["cantidad"] is not None else 0,
+                   f["evaluador"], f["lon"], f["lat"], f["dias_mes"]] for f in filas],
+    }
+    return _json(request, datos)
+
+
+# ============================================================
+#  EXCEL DE LO QUE SE VE EN EL MAPA
+# ============================================================
+
+MAX_IDS = 200_000
+MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+         "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+def _pedido_excel(datos: dict) -> tuple[list[int], int, int, list[str]]:
+    try:
+        anio, mes = int(datos.get("anio")), int(datos.get("mes"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Falta el año o el mes.")
+    _mes(anio, mes)
+    ids = datos.get("ids") or []
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(400, "No hay registros en el mapa para descargar.")
+    if len(ids) > MAX_IDS:
+        raise HTTPException(400, f"Son demasiados registros ({len(ids)}).")
+    try:
+        ids = sorted({int(x) for x in ids})
+    except (TypeError, ValueError):
+        raise HTTPException(400, "La lista de registros trae identificadores inválidos.")
+    # Lo que el usuario tenía filtrado, para la hoja «filtros» del Excel
+    filtros = [str(x)[:500] for x in (datos.get("filtros") or []) if x][:20]
+    return ids, anio, mes, filtros
+
+
+def _descarga(titulo: str, base: str, columnas, filas, anio, mes, filtros, nota_extra=""):
+    if not filas:
+        raise HTTPException(404, "Esos registros ya no están en el consolidado "
+                                 "(pudieron anularse). Recarga el mapa.")
+    nota = "\n".join([f"{titulo} · lo que se veía en el mapa",
+                      f"Mes: {MESES[mes - 1]} de {anio}", *filtros,
+                      f"Filas: {len(filas)}",
+                      "Mismas columnas que el consolidado de Sanidad. No incluye anulados."]
+                     + ([nota_extra] if nota_extra else []))
+    contenido = _excel("consolidado", columnas, filas, nota)
+    archivo = f"mapa_{base}_{anio}{mes:02d}.xlsx"
+    return Response(content=contenido, media_type=XLSX,
+                    headers={"Content-Disposition": f'attachment; filename="{archivo}"'})
+
+
+@router.post("/censo/excel")
+def post_censo_excel(datos: dict = Body(...), _=Depends(sesion)):
+    """El consolidado del censo, solo con las palmas que se ven en el mapa."""
+    ids, anio, mes, filtros = _pedido_excel(datos)
+    return _descarga("Mapas · Censo", "censo", COL_CENSO, repo.excel_censo(ids),
+                     anio, mes, filtros,
+                     "Una fila por palma: su último registro del mes.")
+
+
+@router.post("/tratamientos/excel")
+def post_trat_excel(datos: dict = Body(...), _=Depends(sesion)):
+    """El consolidado de tratamientos (una fila por producto) de lo que se ve."""
+    ids, anio, mes, filtros = _pedido_excel(datos)
+    return _descarga("Mapas · Tratamientos", "tratamientos", COL_TRAT,
+                     repo.excel_tratamientos(ids), anio, mes, filtros,
+                     "Una palma por mes (su último tratamiento); una fila por producto aplicado.")
+
+
+@router.post("/plagas/excel")
+def post_plagas_excel(datos: dict = Body(...), _=Depends(sesion)):
+    """El consolidado de plagas, solo con las lecturas que suman en el mapa."""
+    ids, anio, mes, filtros = _pedido_excel(datos)
+    return _descarga("Mapas · Plagas", "plagas", COL_PLAGAS, repo.excel_plagas(ids),
+                     anio, mes, filtros,
+                     "Solo el último día evaluado de cada palma en el mes.")
